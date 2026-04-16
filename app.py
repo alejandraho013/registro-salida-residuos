@@ -18,9 +18,9 @@ st.set_page_config(page_title="TINTATEX - Gestión de Residuos", page_icon="♻�
 if 'lista_temporal' not in st.session_state:
     st.session_state.lista_temporal = []
 
-st.title("🚚 Registro salida residuos - TINTATEX")
+st.title("🚚 Registro de Despacho - TINTATEX")
 
-# --- DATOS DEL GESTOR (Se llenan una sola vez por camión) ---
+# --- DATOS DEL GESTOR ---
 st.subheader("1. Datos del Vehículo y Gestor")
 with st.expander("Configurar datos del transportador", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -46,7 +46,6 @@ lista_residuos = gestores_data.get(empresa, []).copy()
 lista_residuos.append("Otro")
 tipo = col_a.selectbox("Tipo de Residuo", options=lista_residuos)
 
-# Manejo de "Otro"
 residuo_nombre = tipo
 if tipo == "Otro":
     residuo_nombre = col_a.text_input("¿Cuál residuo?")
@@ -54,74 +53,88 @@ if tipo == "Otro":
 peso = col_b.number_input("Peso (kg)", min_value=0.0, step=0.1)
 
 if col_c.button("➕ Agregar a la lista"):
-    if peso > 0 and residuo_nombre:
+    if peso > 0 and residuo_nombre and placa:
         nuevo_item = {
             "fecha": fecha,
             "empresa": empresa,
             "conductor": conductor,
-            "placa": placa,
+            "placa": placa.upper(),
             "tipo_residuo": residuo_nombre,
             "peso_kg": peso
         }
         st.session_state.lista_temporal.append(nuevo_item)
         st.toast(f"Agregado: {residuo_nombre}")
     else:
-        st.warning("Ingrese peso y nombre del residuo")
+        st.warning("Ingrese placa, peso y nombre del residuo")
 
-# --- MOSTRAR TABLA TEMPORAL Y SUMA ---
+# --- MOSTRAR TABLA Y SUMA ---
 if st.session_state.lista_temporal:
     df_temp = pd.DataFrame(st.session_state.lista_temporal)
-    
     st.markdown("### 📋 Resumen de Carga Actual")
-    st.dataframe(df_temp[["tipo_residuo", "peso_kg"]], use_container_width=True, hide_index=True)
+    st.table(df_temp[["tipo_residuo", "peso_kg"]])
     
     suma_actual = df_temp["peso_kg"].sum()
-    st.info(f"⚖️ **Suma Total de este despacho: {suma_actual:,.1f} kg**")
+    st.info(f"⚖️ **Suma Total del despacho: {suma_actual:,.1f} kg**")
     
-    if st.button("🗑️ Borrar lista y empezar de nuevo"):
+    if st.button("🗑️ Borrar lista"):
         st.session_state.lista_temporal = []
         st.rerun()
 
 st.markdown("---")
 
-# --- FINALIZAR Y ENVIAR A GITHUB ---
-st.subheader("3. Finalizar Registro")
-novedades = st.text_area("Novedades finales del despacho")
-foto = st.file_uploader("Foto de evidencia del camión cargado", type=["jpg", "png", "jpeg"])
+# --- SECCIÓN DE FOTOS Y FINALIZACIÓN ---
+st.subheader("3. Evidencias y Finalizar")
+f1, f2 = st.columns(2)
 
-if st.button("📤 ENVIAR TODO A GITHUB"):
+with f1:
+    foto_memorando = st.file_uploader("📄 Foto del Memorando", type=["jpg", "png", "jpeg"])
+with f2:
+    foto_camion = st.file_uploader("🚛 Foto Camión Lleno (Que se vea la placa)", type=["jpg", "png", "jpeg"])
+
+novedades = st.text_area("Novedades finales")
+
+if st.button("📤 ENVIAR DESPACHO COMPLETO"):
     if not st.session_state.lista_temporal:
-        st.error("La lista está vacía. Agregue residuos primero.")
-    elif not conductor or not placa:
-        st.error("Faltan datos del conductor o placa.")
+        st.error("Debe agregar al menos un residuo a la lista.")
+    elif not foto_memorando or not foto_camion:
+        st.warning("⚠️ Se recomienda subir ambas fotos (Memorando y Camión) para el registro.")
+        # Si prefieres que sea OBLIGATORIO, cambia el st.warning por st.error y pon un st.stop()
+    
     else:
-        with st.spinner("Guardando despacho completo..."):
+        with st.spinner("Guardando registro y fotos en GitHub..."):
             try:
                 g = Github(TOKEN)
                 repo = g.get_repo(REPO_NAME)
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # 1. Subir Foto
-                url_foto = "Sin foto"
-                if foto:
-                    path = f"fotos/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{placa}.jpg"
-                    repo.create_file(path, f"Evidencia {placa}", foto.getvalue())
-                    url_foto = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{path}"
+                # 1. Subir Foto Memorando
+                url_memo = "Sin foto"
+                if foto_memorando:
+                    path_memo = f"fotos/MEMO_{timestamp}_{placa.upper()}.jpg"
+                    repo.create_file(path_memo, f"Memo {placa}", foto_memorando.getvalue())
+                    url_memo = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{path_memo}"
 
-                # 2. Leer CSV actual
+                # 2. Subir Foto Camión
+                url_camion = "Sin foto"
+                if foto_camion:
+                    path_camion = f"fotos/CAMION_{timestamp}_{placa.upper()}.jpg"
+                    repo.create_file(path_camion, f"Camion {placa}", foto_camion.getvalue())
+                    url_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{path_camion}"
+
+                # 3. Actualizar CSV (Incluyendo las dos URLs de fotos)
                 contents = repo.get_contents("database.csv")
                 db_txt = contents.decoded_content.decode("utf-8").strip()
                 
-                # 3. Preparar todas las filas nuevas
                 nuevas_filas = ""
                 for item in st.session_state.lista_temporal:
-                    nuevas_filas += f"\n{item['fecha']},{item['empresa']},{item['conductor']},{item['placa']},{item['tipo_residuo']},{item['peso_kg']},\"{novedades}\",{url_foto}"
+                    # Formato: fecha, empresa, conductor, placa, residuo, peso, novedades, url_memo, url_camion
+                    nuevas_filas += f"\n{item['fecha']},{item['empresa']},{item['conductor']},{item['placa']},{item['tipo_residuo']},{item['peso_kg']},\"{novedades}\",{url_memo},{url_camion}"
                 
-                # 4. Guardar todo de un solo golpe
                 repo.update_file("database.csv", f"Despacho {placa}", db_txt + nuevas_filas, contents.sha)
                 
-                st.success(f"✅ ¡Despacho de {suma_actual} kg guardado exitosamente!")
+                st.success(f"✅ ¡Despacho guardado! Total: {suma_actual} kg.")
                 st.balloons()
-                st.session_state.lista_temporal = [] # Limpiar para el siguiente camión
+                st.session_state.lista_temporal = []
                 
             except Exception as e:
-                st.error(f"Error al guardar: {e}")
+                st.error(f"Error: {e}")
