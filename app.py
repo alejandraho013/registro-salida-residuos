@@ -107,7 +107,7 @@ if st.button("📤 ENVIAR REGISTRO"):
                 repo = g.get_repo(REPO_NAME)
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # 1. Subir Foto Memorando
+                # 1. Subir Foto Memo
                 url_memo = "Sin foto"
                 if foto_memorando:
                     path_memo = f"fotos/MEMO_{timestamp}_{placa.upper()}.jpg"
