@@ -14,11 +14,22 @@ except Exception:
 
 st.set_page_config(page_title="TINTATEX - Gestión de Residuos", page_icon="♻️", layout="centered")
 
-# Mantener la lista de pesajes en la memoria del navegador
+# Inicializar estados de la sesión
 if 'lista_temporal' not in st.session_state:
     st.session_state.lista_temporal = []
+if 'envio_exitoso' not in st.session_state:
+    st.session_state.envio_exitoso = False
 
 st.title("♻️ Salida de Residuos TINTATEX")
+
+# --- MENSAJE DE ÉXITO (Solo se muestra si el envío fue correcto) ---
+if st.session_state.envio_exitoso:
+    st.success("El registro se envió correctamente ✅")
+    if st.button("Nuevo registro"):
+        st.session_state.envio_exitoso = False
+        st.session_state.lista_temporal = []
+        st.rerun()
+    st.stop() # Detiene la ejecución para que el usuario vea el mensaje
 
 # --- 1. DATOS DEL TRANSPORTADOR (COLAPSABLE) ---
 with st.expander("🚛 1. Datos del Vehículo y Gestor", expanded=True):
@@ -41,7 +52,6 @@ with st.expander("🚛 1. Datos del Vehículo y Gestor", expanded=True):
     conductor = c2.text_input("Conductor")
     placa = c2.text_input("Placa (ABC123)").upper().strip()
     
-    # Validación visual de placa
     placa_valida = False
     if placa:
         if re.match(r"^[A-Z]{3}[0-9]{3}$", placa):
@@ -68,9 +78,9 @@ peso = col_pes.number_input("Peso (kg)", min_value=0.0, step=0.1, format="%.1f")
 
 if st.button("➕ AGREGAR PESAJE", use_container_width=True):
     if not placa_valida:
-        st.warning("⚠️ Primero corrige la placa en la sección de arriba.")
+        st.warning("⚠️ Primero corrige la placa.")
     elif peso <= 0:
-        st.warning("⚠️ El peso ingresado debe ser mayor a 0.")
+        st.warning("⚠️ El peso debe ser mayor a 0.")
     else:
         st.session_state.lista_temporal.append({"Residuo": residuo_final, "Kg": peso})
         st.toast(f"✅ Item agregado: {peso}kg")
@@ -84,7 +94,7 @@ if st.session_state.lista_temporal:
     m1.metric("Total Acumulado", f"{suma_total:,.1f} kg")
     m2.metric("N° Pesajes", conteo)
 
-    with st.expander("🔍 Ver detalle de la carga / Editar", expanded=False):
+    with st.expander("🔍 Ver detalle / Editar", expanded=False):
         df_temp = pd.DataFrame(st.session_state.lista_temporal)
         st.dataframe(df_temp, use_container_width=True, hide_index=True)
         
@@ -106,22 +116,20 @@ foto_memo = f1.file_uploader("📄 Foto Memo (Opc)", type=["jpg", "png", "jpeg"]
 foto_camion = f2.file_uploader("🚛 Foto Camión (Opc)", type=["jpg", "png", "jpeg"])
 novedades = st.text_area("Observaciones Finales")
 
-# BOTÓN FINAL CON TEXTO CORREGIDO
 if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
     if not st.session_state.lista_temporal:
-        st.error("❌ No hay datos para enviar. Agregue pesajes en la Sección 2.")
+        st.error("❌ No hay datos para enviar.")
     elif not placa_valida:
-        st.error("❌ No se puede enviar: La placa no cumple el formato (3 letras y 3 números).")
+        st.error("❌ La placa no es válida.")
     elif not conductor or not empresa_final:
-        st.error("❌ Faltan datos del conductor o la empresa gestora.")
+        st.error("❌ Faltan datos obligatorios.")
     else:
-        with st.spinner("⏳ Enviando información a la base de datos..."):
+        with st.spinner("⏳ Enviando..."):
             try:
                 g = Github(TOKEN)
                 repo = g.get_repo(REPO_NAME)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # Procesamiento de fotos
                 u_memo = "Sin foto"; u_camion = "Sin foto"
                 if foto_memo:
                     p_memo = f"fotos/MEMO_{ts}.jpg"
@@ -132,7 +140,6 @@ if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
                     repo.create_file(p_camion, f"Camion {ts}", foto_camion.getvalue())
                     u_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{p_camion}"
 
-                # Actualización de base de datos
                 csv = repo.get_contents("database.csv")
                 data_csv = csv.decoded_content.decode("utf-8").strip()
                 nov_final = novedades if novedades else "Sin observaciones"
@@ -143,17 +150,9 @@ if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
                 
                 repo.update_file("database.csv", f"Carga {placa} {ts}", data_csv + nuevas_filas, csv.sha)
                 
-                # MENSAJES DE ÉXITO
-                st.success(f"✅ ¡REGISTRO ENVIADO EXITOSAMENTE! El despacho de la placa {placa} quedó guardado.")
-                st.balloons()
-                
-                # Limpiar para el siguiente camión
-                st.session_state.lista_temporal = []
-                # Pequeña pausa para que el usuario vea el mensaje de éxito antes de limpiar la pantalla
-                st.info("La aplicación se reiniciará en unos segundos para un nuevo registro...")
+                # Marcar como éxito y refrescar
+                st.session_state.envio_exitoso = True
                 st.rerun()
 
             except Exception as e:
-                # MENSAJE DE ERROR
-                st.error(f"❌ ERROR AL ENVIAR: No se pudo conectar con la base de datos. Verifique su conexión a internet.")
-                st.warning(f"Detalle técnico del error: {e}")
+                st.error(f"❌ ERROR AL ENVIAR: {e}")
