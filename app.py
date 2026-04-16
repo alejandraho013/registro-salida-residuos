@@ -93,7 +93,7 @@ with f2:
 
 novedades = st.text_area("Novedades finales")
 
-if st.button("📤 ENVIAR DESPACHO COMPLETO"):
+if st.button("📤 ENVIAR REGISTRO"):
     if not st.session_state.lista_temporal:
         st.error("Debe agregar al menos un residuo a la lista.")
     elif not foto_memorando or not foto_camion:
