@@ -20,7 +20,7 @@ if 'lista_temporal' not in st.session_state:
 
 st.title("♻️ Salida de Residuos TINTATEX")
 
-# --- 1. DATOS DEL TRANSPORTADOR (COLAPSABLE PARA AHORRAR ESPACIO) ---
+# --- 1. DATOS DEL TRANSPORTADOR (COLAPSABLE) ---
 with st.expander("🚛 1. Datos del Vehículo y Gestor", expanded=True):
     c1, c2 = st.columns(2)
     gestores_data = {
@@ -45,14 +45,14 @@ with st.expander("🚛 1. Datos del Vehículo y Gestor", expanded=True):
     placa_valida = False
     if placa:
         if re.match(r"^[A-Z]{3}[0-9]{3}$", placa):
-            st.success("Placa Correcta")
+            st.success("✅ Formato de placa correcto")
             placa_valida = True
         else:
-            st.error("Formato: 3 letras y 3 números")
+            st.error("❌ Formato incorrecto: 3 letras y 3 números")
 
 st.markdown("---")
 
-# --- 2. ENTRADA DE PESAJES (ESTO ES LO QUE MÁS USARÁS) ---
+# --- 2. ENTRADA DE PESAJES ---
 st.subheader("2. Ingreso de Pesos")
 col_res, col_pes = st.columns([2, 1])
 
@@ -68,33 +68,31 @@ peso = col_pes.number_input("Peso (kg)", min_value=0.0, step=0.1, format="%.1f")
 
 if st.button("➕ AGREGAR PESAJE", use_container_width=True):
     if not placa_valida:
-        st.warning("⚠️ Primero corrige la placa arriba.")
+        st.warning("⚠️ Primero corrige la placa en la sección de arriba.")
     elif peso <= 0:
-        st.warning("⚠️ El peso debe ser mayor a 0.")
+        st.warning("⚠️ El peso ingresado debe ser mayor a 0.")
     else:
         st.session_state.lista_temporal.append({"Residuo": residuo_final, "Kg": peso})
-        st.toast(f"Agregado: {peso}kg")
-        # No usamos rerun aquí para que el teclado del celular no se cierre siempre
+        st.toast(f"✅ Item agregado: {peso}kg")
 
-# --- 3. RESUMEN SINTETIZADO (PARA VER LOS 20 PESAJES SIN OCUPAR ESPACIO) ---
+# --- 3. RESUMEN SINTETIZADO ---
 if st.session_state.lista_temporal:
     suma_total = sum(item['Kg'] for item in st.session_state.lista_temporal)
     conteo = len(st.session_state.lista_temporal)
     
-    # Métricas rápidas
     m1, m2 = st.columns(2)
     m1.metric("Total Acumulado", f"{suma_total:,.1f} kg")
     m2.metric("N° Pesajes", conteo)
 
-    with st.expander("🔍 Ver detalle / Borrar registros", expanded=False):
+    with st.expander("🔍 Ver detalle de la carga / Editar", expanded=False):
         df_temp = pd.DataFrame(st.session_state.lista_temporal)
-        # Tabla compacta tipo Excel
         st.dataframe(df_temp, use_container_width=True, hide_index=True)
         
         c_del1, c_del2 = st.columns(2)
         if c_del1.button("⏪ Borrar Último", use_container_width=True):
-            st.session_state.lista_temporal.pop()
-            st.rerun()
+            if st.session_state.lista_temporal:
+                st.session_state.lista_temporal.pop()
+                st.rerun()
         if c_del2.button("🗑️ Borrar Todo", use_container_width=True):
             st.session_state.lista_temporal = []
             st.rerun()
@@ -106,21 +104,24 @@ st.subheader("3. Finalizar Despacho")
 f1, f2 = st.columns(2)
 foto_memo = f1.file_uploader("📄 Foto Memo (Opc)", type=["jpg", "png", "jpeg"])
 foto_camion = f2.file_uploader("🚛 Foto Camión (Opc)", type=["jpg", "png", "jpeg"])
-novedades = st.text_area("Observaciones")
+novedades = st.text_area("Observaciones Finales")
 
-if st.button("📤 ENVIAR A GITHUB / POWER BI", type="primary", use_container_width=True):
+# BOTÓN FINAL CON TEXTO CORREGIDO
+if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
     if not st.session_state.lista_temporal:
-        st.error("Lista vacía.")
+        st.error("❌ No hay datos para enviar. Agregue pesajes en la Sección 2.")
     elif not placa_valida:
-        st.error("Placa inválida.")
+        st.error("❌ No se puede enviar: La placa no cumple el formato (3 letras y 3 números).")
+    elif not conductor or not empresa_final:
+        st.error("❌ Faltan datos del conductor o la empresa gestora.")
     else:
-        with st.spinner("Sincronizando..."):
+        with st.spinner("⏳ Enviando información a la base de datos..."):
             try:
                 g = Github(TOKEN)
                 repo = g.get_repo(REPO_NAME)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # Fotos
+                # Procesamiento de fotos
                 u_memo = "Sin foto"; u_camion = "Sin foto"
                 if foto_memo:
                     p_memo = f"fotos/MEMO_{ts}.jpg"
@@ -131,7 +132,7 @@ if st.button("📤 ENVIAR A GITHUB / POWER BI", type="primary", use_container_wi
                     repo.create_file(p_camion, f"Camion {ts}", foto_camion.getvalue())
                     u_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{p_camion}"
 
-                # CSV
+                # Actualización de base de datos
                 csv = repo.get_contents("database.csv")
                 data_csv = csv.decoded_content.decode("utf-8").strip()
                 nov_final = novedades if novedades else "Sin observaciones"
@@ -142,9 +143,17 @@ if st.button("📤 ENVIAR A GITHUB / POWER BI", type="primary", use_container_wi
                 
                 repo.update_file("database.csv", f"Carga {placa} {ts}", data_csv + nuevas_filas, csv.sha)
                 
-                st.success("✅ ¡Despacho guardado!")
+                # MENSAJES DE ÉXITO
+                st.success(f"✅ ¡REGISTRO ENVIADO EXITOSAMENTE! El despacho de la placa {placa} quedó guardado.")
                 st.balloons()
+                
+                # Limpiar para el siguiente camión
                 st.session_state.lista_temporal = []
+                # Pequeña pausa para que el usuario vea el mensaje de éxito antes de limpiar la pantalla
+                st.info("La aplicación se reiniciará en unos segundos para un nuevo registro...")
                 st.rerun()
+
             except Exception as e:
-                st.error(f"Error: {e}")
+                # MENSAJE DE ERROR
+                st.error(f"❌ ERROR AL ENVIAR: No se pudo conectar con la base de datos. Verifique su conexión a internet.")
+                st.warning(f"Detalle técnico del error: {e}")
