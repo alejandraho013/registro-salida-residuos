@@ -18,7 +18,7 @@ st.set_page_config(page_title="TINTATEX - Gestión de Residuos", page_icon="♻�
 if 'lista_temporal' not in st.session_state:
     st.session_state.lista_temporal = []
 
-st.title("🚚 Registro de Despacho - TINTATEX")
+st.title("🚚 Registro de salida de residuos - TINTATEX")
 
 # --- 1. DATOS DEL VEHÍCULO Y GESTOR ---
 st.subheader("1. Datos del Transportador")
@@ -91,7 +91,7 @@ with f2:
 
 novedades = st.text_area("Novedades u Observaciones")
 
-if st.button("📤 FINALIZAR Y GUARDAR REGISTRO"):
+if st.button("📤 Guardar registro"):
     if not st.session_state.lista_temporal:
         st.error("❌ La lista de carga está vacía.")
     elif not foto_memo or not foto_camion:
