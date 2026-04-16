@@ -20,9 +20,9 @@ if 'lista_temporal' not in st.session_state:
 
 st.title("🚚 Registro de Despacho - TINTATEX")
 
-# --- 1. DATOS DEL GESTOR ---
-st.subheader("1. Datos del Vehículo y Gestor")
-with st.expander("Configurar datos del transportador", expanded=True):
+# --- 1. DATOS DEL VEHÍCULO Y GESTOR ---
+st.subheader("1. Datos del Transportador")
+with st.container():
     c1, c2, c3 = st.columns(3)
     gestores_data = {
         "CORPOGESTAR": sorted(["Cartón limpio", "Cartón sucio", "Papel de archivo", "Pasta", "PET limpio", "PET sucio", "Plástico", "Retal de tela", "Tubo plega"]),
@@ -31,28 +31,29 @@ with st.expander("Configurar datos del transportador", expanded=True):
         "Quimetales Peligrosos": sorted(["RAEE", "Residuos laboratorio", "Tela sucia"])
     }
     
-    fecha = c1.date_input("Fecha", datetime.now())
+    fecha = c1.date_input("Fecha de Salida", datetime.now())
     empresa = c1.selectbox("Empresa Gestora", options=list(gestores_data.keys()))
     conductor = c2.text_input("Nombre del Conductor")
     placa = c3.text_input("Placa del Vehículo").upper()
 
 st.markdown("---")
 
-# --- 2. AGREGAR RESIDUOS ---
-st.subheader("2. Cargar Residuos al Camión")
+# --- 2. CARGA DE RESIDUOS ---
+st.subheader("2. Detalle de la Carga")
 col_a, col_b, col_c = st.columns([2, 1, 1])
 
 lista_residuos = gestores_data.get(empresa, []).copy()
 lista_residuos.append("Otro")
-tipo = col_a.selectbox("Tipo de Residuo", options=lista_residuos)
+tipo = col_a.selectbox("Seleccione Residuo", options=lista_residuos)
 
+# Lógica para campo "Otro"
 residuo_nombre = tipo
 if tipo == "Otro":
-    residuo_nombre = col_a.text_input("¿Cuál residuo?")
+    residuo_nombre = col_a.text_input("¿Cuál es el residuo?")
 
 peso = col_b.number_input("Peso (kg)", min_value=0.0, step=0.1)
 
-if col_c.button("➕ Agregar a la lista"):
+if col_c.button("➕ Agregar a la Lista"):
     if peso > 0 and residuo_nombre and placa:
         nuevo_item = {
             "tipo_residuo": residuo_nombre,
@@ -61,74 +62,72 @@ if col_c.button("➕ Agregar a la lista"):
         st.session_state.lista_temporal.append(nuevo_item)
         st.rerun()
     else:
-        st.warning("Complete placa, peso y residuo")
+        st.warning("⚠️ Complete Placa, Peso y Residuo.")
 
-# --- MOSTRAR TABLA CON OPCIÓN DE BORRAR INDIVIDUAL ---
+# Mostrar tabla interactiva
 if st.session_state.lista_temporal:
-    st.markdown("### 📋 Resumen de Carga Actual")
-    
-    # Creamos una tabla con un botón de eliminar para cada fila
+    st.markdown("#### 📋 Resumen Temporal")
     for index, item in enumerate(st.session_state.lista_temporal):
         cols = st.columns([3, 1, 1])
-        cols[0].write(f"**{item['tipo_residuo']}**")
+        cols[0].write(f"🔹 {item['tipo_residuo']}")
         cols[1].write(f"{item['peso_kg']} kg")
         if cols[2].button("🗑️ Quitar", key=f"btn_{index}"):
             st.session_state.lista_temporal.pop(index)
             st.rerun()
     
     suma_actual = sum(item['peso_kg'] for item in st.session_state.lista_temporal)
-    st.info(f"⚖️ **Suma Total del despacho: {suma_actual:,.1f} kg**")
+    st.info(f"⚖️ **Peso Total Acumulado: {suma_actual:,.1f} kg**")
 
 st.markdown("---")
 
-# --- 3. EVIDENCIAS Y ENVÍO ---
-st.subheader("3. Evidencias y Finalizar")
+# --- 3. EVIDENCIAS Y ENVÍO FINAL ---
+st.subheader("3. Evidencias y Cierre")
 f1, f2 = st.columns(2)
 
 with f1:
-    foto_memo = st.file_uploader("📄 Foto del Memo", type=["jpg", "png", "jpeg"])
+    foto_memo = st.file_uploader("📄 Subir Foto del Memo", type=["jpg", "png", "jpeg"])
 with f2:
-    foto_camion = st.file_uploader("🚛 Foto Camión Lleno (Placa visible)", type=["jpg", "png", "jpeg"])
+    foto_camion = st.file_uploader("🚛 Subir Foto del Camión Lleno", type=["jpg", "png", "jpeg"])
 
-novedades = st.text_area("Novedades finales")
+novedades = st.text_area("Novedades u Observaciones")
 
-if st.button("📤 ENVIAR DESPACHO COMPLETO"):
+if st.button("📤 FINALIZAR Y GUARDAR REGISTRO"):
     if not st.session_state.lista_temporal:
-        st.error("La lista está vacía.")
+        st.error("❌ La lista de carga está vacía.")
+    elif not foto_memo or not foto_camion:
+        st.error("❌ Es obligatorio subir ambas fotos para el despacho.")
     else:
-        with st.spinner("Guardando en GitHub..."):
+        with st.spinner("Sincronizando con GitHub..."):
             try:
                 g = Github(TOKEN)
                 repo = g.get_repo(REPO_NAME)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # Subir Fotos
-                u_memo = "Sin foto"
-                if foto_memo:
-                    p_memo = f"fotos/MEMO_{ts}_{placa}.jpg"
-                    repo.create_file(p_memo, f"Memo {placa}", foto_memo.getvalue())
-                    u_memo = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{p_memo}"
+                # --- SUBIR FOTOS ---
+                # Memo
+                path_memo = f"fotos/MEMO_{ts}.jpg"
+                repo.create_file(path_memo, f"Memo {ts}", foto_memo.getvalue())
+                url_memo = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{path_memo}"
 
-                u_camion = "Sin foto"
-                if foto_camion:
-                    p_camion = f"fotos/CAMION_{ts}_{placa}.jpg"
-                    repo.create_file(p_camion, f"Camion {placa}", foto_camion.getvalue())
-                    u_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{p_camion}"
+                # Camion
+                path_camion = f"fotos/CAMION_{ts}.jpg"
+                repo.create_file(path_camion, f"Camion {ts}", foto_camion.getvalue())
+                url_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{path_camion}"
 
-                # Actualizar CSV
+                # --- ACTUALIZAR CSV ---
                 contents = repo.get_contents("database.csv")
                 db_txt = contents.decoded_content.decode("utf-8").strip()
                 
-                filas_nuevas = ""
+                nuevas_filas = ""
                 for item in st.session_state.lista_temporal:
-                    filas_nuevas += f"\n{fecha},{empresa},{conductor},{placa},{item['tipo_residuo']},{item['peso_kg']},\"{novedades}\",{u_memo},{u_camion}"
+                    # Orden: fecha,empresa,conductor,placa,tipo_residuo,peso_kg,novedades,url_memo,url_camion
+                    nuevas_filas += f"\n{fecha},{empresa},{conductor},{placa},{item['tipo_residuo']},{item['peso_kg']},\"{novedades}\",{url_memo},{url_camion}"
                 
-                repo.update_file("database.csv", f"Despacho {placa}", db_txt + filas_nuevas, contents.sha)
+                repo.update_file("database.csv", f"Despacho {placa} - {ts}", db_txt + nuevas_filas, contents.sha)
                 
-                st.success("✅ Despacho guardado exitosamente.")
+                st.success(f"✅ ¡Despacho de {placa} guardado con éxito!")
                 st.balloons()
-                st.session_state.lista_temporal = []
-                st.rerun()
+                st.session_state.lista_temporal = [] # Limpiar lista
                 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"❌ Error al conectar con GitHub: {e}")
