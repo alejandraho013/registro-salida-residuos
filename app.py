@@ -18,7 +18,7 @@ st.set_page_config(page_title="TINTATEX - Gestión de Residuos", page_icon="♻�
 if 'lista_temporal' not in st.session_state:
     st.session_state.lista_temporal = []
 
-st.title("🚚 Registro de Despacho - TINTATEX")
+st.title("🚚 Registro salida residuos - TINTATEX")
 
 # --- DATOS DEL GESTOR (Se llenan una sola vez por camión) ---
 st.subheader("1. Datos del Vehículo y Gestor")
