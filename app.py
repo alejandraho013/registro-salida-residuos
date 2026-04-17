@@ -13,8 +13,9 @@ except Exception:
     st.error("⚠️ Configura el TOKEN en 'Advanced Settings'.")
     st.stop()
 
-st.set_page_config(page_title="TINTATEX - Registro Dual", layout="centered")
+st.set_page_config(page_title="TINTATEX - Pesaje Dinámico", layout="centered")
 
+# Inicialización de estados
 if 'lista_temporal' not in st.session_state:
     st.session_state.lista_temporal = []
 if 'envio_exitoso' not in st.session_state:
@@ -25,7 +26,7 @@ st.title("Registro de salida de Residuos TINTATEX")
 # --- MENSAJE DE ÉXITO ---
 if st.session_state.envio_exitoso:
     st.success("¡Registro guardado exitosamente en CSV y Excel! ✅")
-    if st.button("Nuevo registro"):
+    if st.button("Iniciar Nuevo Camión"):
         st.session_state.envio_exitoso = False
         st.session_state.lista_temporal = []
         st.rerun()
@@ -57,7 +58,7 @@ with st.expander("🚛 1. Datos del Vehículo", expanded=True):
 
 st.markdown("---")
 
-# --- 2. INGRESO DE PESAJES ---
+# --- 2. INGRESO DE PESAJES (SIN LÍMITE) ---
 st.subheader("2. Detalle de Pesajes")
 col_res, col_pes = st.columns([2, 1])
 opciones_res = gestores_data.get(empresa_sel, []).copy()
@@ -73,19 +74,24 @@ if st.button("➕ AGREGAR PESAJE", use_container_width=True):
         st.session_state.lista_temporal.append({"tipo_residuo": residuo_final, "peso_kg": peso})
         st.toast(f"Agregado: {peso}kg")
 
-# Resumen visual compacto
+# --- RESUMEN DE MÉTRICAS ---
 if st.session_state.lista_temporal:
     df_temp = pd.DataFrame(st.session_state.lista_temporal)
-    st.metric("Total Acumulado", f"{df_temp['peso_kg'].sum():,.1f} kg")
-    with st.expander("🔍 Ver detalle de pesajes", expanded=False):
+    
+    col_m1, col_m2 = st.columns(2)
+    col_m1.metric("Total Acumulado", f"{df_temp['peso_kg'].sum():,.1f} kg")
+    col_m2.metric("N° de Pesajes realizados", len(st.session_state.lista_temporal))
+    
+    with st.expander("🔍 Ver / Editar todos los pesajes", expanded=False):
+        # El dataframe permite visualizar infinitas filas con scroll interno
         st.dataframe(df_temp, use_container_width=True, hide_index=True)
-        if st.button("⏪ Borrar Último"):
+        if st.button("⏪ Borrar Último Item"):
             st.session_state.lista_temporal.pop()
             st.rerun()
 
 st.markdown("---")
 
-# --- 3. EVIDENCIAS Y ENVÍO DUAL ---
+# --- 3. EVIDENCIAS Y ENVÍO ---
 st.subheader("3. Evidencias y Cierre")
 f1, f2 = st.columns(2)
 foto_memo = f1.file_uploader("Foto Memo (Opc)", type=["jpg", "png", "jpeg"])
@@ -96,13 +102,13 @@ if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
     if not st.session_state.lista_temporal or not placa_valida:
         st.error("Faltan pesajes o la placa es incorrecta.")
     else:
-        with st.spinner("Guardando en CSV y Excel..."):
+        with st.spinner("Sincronizando con la base de datos..."):
             try:
                 g = Github(TOKEN)
                 repo = g.get_repo(REPO_NAME)
                 ts = datetime.now().strftime('%Y%m%d_%H%M%S')
                 
-                # 1. Subir Fotos
+                # Fotos
                 u_memo, u_camion = "Sin foto", "Sin foto"
                 if foto_memo:
                     p_memo = f"fotos/MEMO_{ts}.jpg"
@@ -115,17 +121,16 @@ if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
 
                 nov_final = novedades if novedades else "Sin observaciones"
                 
-                # --- 2. ACTUALIZAR CSV ---
+                # --- ACTUALIZAR CSV ---
                 csv_file = repo.get_contents("database.csv")
                 csv_data = csv_file.decoded_content.decode("utf-8").strip()
                 for x in st.session_state.lista_temporal:
                     csv_data += f"\n{fecha},{empresa_final},{conductor},{placa},{x['tipo_residuo']},{x['peso_kg']},\"{nov_final}\",{u_memo},{u_camion}"
                 repo.update_file("database.csv", f"Update CSV {ts}", csv_data, csv_file.sha)
 
-                # --- 3. ACTUALIZAR EXCEL (.xlsx) ---
+                # --- ACTUALIZAR EXCEL ---
                 xlsx_file = repo.get_contents("database.xlsx")
                 df_old = pd.read_excel(io.BytesIO(xlsx_file.decoded_content))
-                
                 nuevas_filas = []
                 for x in st.session_state.lista_temporal:
                     nuevas_filas.append({
@@ -133,13 +138,11 @@ if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
                         "placa": placa, "tipo_residuo": x['tipo_residuo'], "peso_kg": x['peso_kg'],
                         "novedades": nov_final, "url_memo": u_memo, "url_camion": u_camion
                     })
-                
                 df_final = pd.concat([df_old, pd.DataFrame(nuevas_filas)], ignore_index=True)
                 
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     df_final.to_excel(writer, index=False)
-                
                 repo.update_file("database.xlsx", f"Update XLSX {ts}", output.getvalue(), xlsx_file.sha)
                 
                 st.session_state.envio_exitoso = True
