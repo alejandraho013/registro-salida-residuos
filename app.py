@@ -23,7 +23,7 @@ except Exception:
     st.stop()
 
 st.set_page_config(page_title="TINTATEX - Gestión de Residuos", layout="wide")
-st.title("♻️ Registro de Residuos TINTATEX")
+st.title("Registro de Residuos TINTATEX")
 
 if "lista_temporal" not in st.session_state:
     st.session_state.lista_temporal = []
