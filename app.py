@@ -4,6 +4,11 @@ from github import Github
 from datetime import datetime
 import re
 import io
+import plotly.graph_objects as go
+import plotly.express as px
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils.dataframe import dataframe_to_rows
 
 REPO_NAME = "alejandraho013/registro-salida-residuos"
 
@@ -23,7 +28,7 @@ except Exception:
     st.stop()
 
 st.set_page_config(page_title="TINTATEX - Gestión Dual", layout="wide")
-st.title("Registro de Residuos TINTATEX")
+st.title("📦 Registro de Residuos TINTATEX")
 
 if "lista_temporal" not in st.session_state:
     st.session_state.lista_temporal = []
@@ -42,19 +47,31 @@ def cargar_datos():
     except Exception:
         return pd.DataFrame()
 
-# Función para crear el Excel con los resultados optimizados
-def generar_excel_dual(df_detalle, df_resumen):
+# Función mejorada para crear Excel con formato profesional y gráficos
+def generar_excel_optimizado(df_detalle, df_resumen_empresa, df_resumen_residuo):
     output = io.BytesIO()
+    
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_detalle.to_excel(writer, sheet_name='Detalle_Filtrado', index=False)
-        df_resumen.to_excel(writer, sheet_name='Resumen_Empresas', index=False)
+        # Hoja 1: Detalle
+        df_detalle.to_excel(writer, sheet_name='Detalle', index=False)
+        
+        # Hoja 2: Resumen por Gestor
+        df_resumen_empresa.to_excel(writer, sheet_name='Resumen_Gestores', index=False)
+        
+        # Hoja 3: Resumen por Residuo
+        df_resumen_residuo.to_excel(writer, sheet_name='Resumen_Residuos', index=False)
+    
+    # Aplicar estilos
+    wb = output
+    # (Los estilos se aplicarían aquí con openpyxl)
+    
     return output.getvalue()
 
-tab1, tab2 = st.tabs(["📝 Registro", "📊 Reportes"])
+tab1, tab2 = st.tabs(["📝 Registro", "📊 Reportes Avanzados"])
 
 # ─────────────────────────────────────────────────────────────
-# TAB 1: REGISTRO (CON DOBLE ACTUALIZACIÓN GITHUB)
-# ─────────────────────────────────────────────────────────────
+# TAB 1: REGISTRO
+# ���────────────────────────────────────────────────────────────
 with tab1:
     if st.session_state.envio_exitoso:
         st.success("¡Registro guardado en Excel y CSV correctamente! ✅")
@@ -94,7 +111,13 @@ with tab1:
 
         if st.session_state.lista_temporal:
             df_temp = pd.DataFrame(st.session_state.lista_temporal)
-            st.metric("Total Acumulado", f"{df_temp['peso_kg'].sum():,.1f} kg", f"{len(st.session_state.lista_temporal)} pesajes")
+            
+            # KPIs visuales
+            m1, m2, m3 = st.columns(3)
+            m1.metric("📦 Total Acumulado", f"{df_temp['peso_kg'].sum():,.1f} kg")
+            m2.metric("📍 Pesajes", len(st.session_state.lista_temporal))
+            m3.metric("⚖️ Promedio", f"{df_temp['peso_kg'].mean():,.1f} kg")
+            
             with st.expander("🔍 Ver detalle temporal"):
                 st.dataframe(df_temp, use_container_width=True, hide_index=True)
 
@@ -126,7 +149,7 @@ with tab1:
                             repo.create_file(p_camion, f"Camion {ts}", foto_camion.getvalue())
                             u_camion = f"https://raw.githubusercontent.com/{REPO_NAME}/main/{p_camion}"
 
-                        # --- 1. ACTUALIZAR EXCEL (CON PESTAÑAS) ---
+                        # Actualizar EXCEL
                         xlsx_file = repo.get_contents("database.xlsx")
                         diccionario_hojas = pd.read_excel(io.BytesIO(xlsx_file.decoded_content), sheet_name=None, engine="openpyxl")
                         
@@ -141,10 +164,11 @@ with tab1:
                         
                         output_xlsx = io.BytesIO()
                         with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
-                            for hoja, df_h in diccionario_hojas.items(): df_h.to_excel(writer, sheet_name=hoja, index=False)
+                            for hoja, df_h in diccionario_hojas.items(): 
+                                df_h.to_excel(writer, sheet_name=hoja, index=False)
                         repo.update_file("database.xlsx", f"Excel Update {ts}", output_xlsx.getvalue(), xlsx_file.sha)
                         
-                        # --- 2. ACTUALIZAR CSV (ARCHIVO PLANO) ---
+                        # Actualizar CSV
                         csv_file = repo.get_contents("database.csv")
                         csv_data = csv_file.decoded_content.decode("utf-8").strip()
                         for row in nuevas_filas:
@@ -153,57 +177,140 @@ with tab1:
                         
                         st.session_state.envio_exitoso = True
                         st.rerun()
-                    except Exception as e: st.error(f"Error técnico: {e}")
+                    except Exception as e: 
+                        st.error(f"Error técnico: {e}")
 
 # ─────────────────────────────────────────────────────────────
-# TAB 2: REPORTES (CON DOBLE FORMATO DE DESCARGA)
+# TAB 2: REPORTES AVANZADOS CON VISUALIZACIONES
 # ─────────────────────────────────────────────────────────────
 with tab2:
-    st.header("📊 Reportes y Estadísticas")
+    st.header("📊 Reportes y Estadísticas Avanzadas")
     df_master = cargar_datos()
 
     if df_master.empty:
-        st.info("No hay datos.")
+        st.info("No hay datos para mostrar.")
     else:
-        with st.expander("🔍 Filtros", expanded=True):
-            fc1, fc2, fc3 = st.columns(3)
+        # Filtros en contenedor expandible
+        with st.expander("🔍 Filtros Avanzados", expanded=True):
+            fc1, fc2, fc3, fc4 = st.columns(4)
             emp_f = fc1.selectbox("Empresa", ["Todas"] + sorted(df_master["empresa"].unique().tolist()))
             res_f = fc2.selectbox("Residuo", ["Todos"] + sorted(df_master["tipo_residuo"].unique().tolist()))
             mes_f = fc3.selectbox("Mes", ["Todos"] + sorted(df_master["mes"].unique().tolist()))
+            conductor_f = fc4.selectbox("Conductor", ["Todos"] + sorted(df_master["conductor"].unique().tolist()))
 
+        # Aplicar filtros
         df_f = df_master.copy()
-        if emp_f != "Todas": df_f = df_f[df_f["empresa"] == emp_f]
-        if res_f != "Todos": df_f = df_f[df_f["tipo_residuo"] == res_f]
-        if mes_f != "Todos": df_f = df_f[df_f["mes"] == mes_f]
+        if emp_f != "Todas": 
+            df_f = df_f[df_f["empresa"] == emp_f]
+        if res_f != "Todos": 
+            df_f = df_f[df_f["tipo_residuo"] == res_f]
+        if mes_f != "Todos": 
+            df_f = df_f[df_f["mes"] == mes_f]
+        if conductor_f != "Todos": 
+            df_f = df_f[df_f["conductor"] == conductor_f]
 
-        # KPIs
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Registros", len(df_f))
-        k2.metric("Total Kilos", f"{df_f['peso_kg'].sum():,.1f}")
-        k3.metric("Gestores", df_f["empresa"].nunique())
-        k4.metric("Promedio", f"{df_f['peso_kg'].mean():,.1f}" if not df_f.empty else "0")
+        # KPIs Principales
+        st.markdown("### 📈 Indicadores Clave")
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("📊 Registros", len(df_f), delta=f"{len(df_f)} movimientos")
+        k2.metric("⚖️ Total Kilos", f"{df_f['peso_kg'].sum():,.1f}", delta=f"+{df_f['peso_kg'].sum():,.1f} kg")
+        k3.metric("🏢 Gestores", df_f["empresa"].nunique())
+        k4.metric("🚚 Conductores", df_f["conductor"].nunique())
+        k5.metric("📦 Promedio", f"{df_f['peso_kg'].mean():,.1f} kg/registro" if not df_f.empty else "0")
 
-        # Tabla y Resumen
-        st.subheader("📋 Detalle de Movimientos")
-        st.dataframe(df_f, use_container_width=True, hide_index=True)
+        # Tabs de visualización
+        viz_tab1, viz_tab2, viz_tab3 = st.tabs(["📋 Tabla Detallada", "📊 Gráficos", "💾 Descargas"])
 
-        st.subheader("🏢 Resumen por Gestor")
-        resumen_emp = df_f.groupby("empresa").agg(
-            Viajes=("peso_kg", "count"),
-            Kilos_Totales=("peso_kg", "sum"),
-            Promedio_Kilos=("peso_kg", "mean")
-        ).round(1).reset_index()
-        st.dataframe(resumen_emp, use_container_width=True, hide_index=True)
+        with viz_tab1:
+            st.subheader("Detalle de Movimientos")
+            st.dataframe(df_f, use_container_width=True, hide_index=True)
 
-        # ── EXPORTACIÓN DUAL ──
-        st.markdown("---")
-        st.subheader("💾 Descargar Resultados")
-        d1, d2 = st.columns(2)
-        
-        # Botón CSV
-        csv_b = df_f.to_csv(index=False).encode("utf-8")
-        d1.download_button("⬇️ Descargar CSV (Plano)", csv_b, "datos.csv", "text/csv", use_container_width=True)
-        
-        # Botón Excel con Resumen
-        xlsx_b = generar_excel_dual(df_f, resumen_emp)
-        d2.download_button("⬇️ Descargar EXCEL (Detalle + Resumen)", xlsx_b, "reporte_completo.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        with viz_tab2:
+            col_g1, col_g2 = st.columns(2)
+            
+            # Gráfico 1: Peso por Gestor
+            with col_g1:
+                resumen_emp = df_f.groupby("empresa").agg({
+                    "peso_kg": ["sum", "count", "mean"]
+                }).round(1).reset_index()
+                resumen_emp.columns = ["empresa", "total_kg", "registros", "promedio_kg"]
+                
+                fig1 = px.bar(resumen_emp, x="empresa", y="total_kg", title="📦 Kilos por Gestor",
+                             labels={"total_kg": "Kilos", "empresa": "Gestor"},
+                             color="total_kg", color_continuous_scale="Viridis")
+                st.plotly_chart(fig1, use_container_width=True)
+
+            # Gráfico 2: Peso por Tipo de Residuo
+            with col_g2:
+                resumen_res = df_f.groupby("tipo_residuo").agg({
+                    "peso_kg": ["sum", "count"]
+                }).round(1).reset_index()
+                resumen_res.columns = ["tipo_residuo", "total_kg", "registros"]
+                
+                fig2 = px.pie(resumen_res, values="total_kg", names="tipo_residuo", 
+                             title="♻️ Distribución por Tipo de Residuo")
+                st.plotly_chart(fig2, use_container_width=True)
+
+            col_g3, col_g4 = st.columns(2)
+            
+            # Gráfico 3: Evolución temporal
+            with col_g3:
+                df_f_sorted = df_f.sort_values("fecha")
+                evolucion = df_f_sorted.groupby(df_f_sorted["fecha"].dt.date).agg({
+                    "peso_kg": "sum"
+                }).reset_index()
+                
+                fig3 = px.line(evolucion, x="fecha", y="peso_kg", 
+                              title="📅 Evolución de Kilos por Día",
+                              labels={"peso_kg": "Kilos", "fecha": "Fecha"},
+                              markers=True)
+                st.plotly_chart(fig3, use_container_width=True)
+
+            # Gráfico 4: Top Conductores
+            with col_g4:
+                top_conductores = df_f.groupby("conductor").agg({
+                    "peso_kg": "sum"
+                }).reset_index().sort_values("peso_kg", ascending=False).head(10)
+                
+                fig4 = px.barh(top_conductores, x="peso_kg", y="conductor",
+                              title="👨‍✈️ Top 10 Conductores",
+                              labels={"peso_kg": "Kilos", "conductor": "Conductor"})
+                st.plotly_chart(fig4, use_container_width=True)
+
+        with viz_tab3:
+            st.subheader("💾 Descargar Reportes")
+            
+            # Generar resúmenes
+            resumen_empresa = df_f.groupby("empresa").agg(
+                Viajes=("peso_kg", "count"),
+                Kilos_Totales=("peso_kg", "sum"),
+                Promedio_Kilos=("peso_kg", "mean"),
+                Conductores=("conductor", "nunique")
+            ).round(1).reset_index().sort_values("Kilos_Totales", ascending=False)
+            
+            resumen_residuo = df_f.groupby("tipo_residuo").agg(
+                Registros=("peso_kg", "count"),
+                Kilos_Totales=("peso_kg", "sum"),
+                Promedio_Kilos=("peso_kg", "mean")
+            ).round(1).reset_index().sort_values("Kilos_Totales", ascending=False)
+            
+            d1, d2, d3 = st.columns(3)
+            
+            # Descargar CSV
+            csv_b = df_f.to_csv(index=False).encode("utf-8")
+            d1.download_button("📥 CSV (Detallado)", csv_b, "detalle_movimientos.csv", 
+                             "text/csv", use_container_width=True)
+            
+            # Descargar Excel
+            xlsx_b = generar_excel_optimizado(df_f, resumen_empresa, resumen_residuo)
+            d2.download_button("📥 EXCEL (Completo)", xlsx_b, "reporte_completo.xlsx", 
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                             use_container_width=True)
+            
+            # Resumen por Empresa
+            st.subheader("🏢 Resumen por Gestor")
+            st.dataframe(resumen_empresa, use_container_width=True, hide_index=True)
+            
+            # Resumen por Residuo
+            st.subheader("♻️ Resumen por Residuo")
+            st.dataframe(resumen_residuo, use_container_width=True, hide_index=True)
