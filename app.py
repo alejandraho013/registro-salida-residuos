@@ -83,7 +83,7 @@ st.markdown("""
 
 st.markdown("""
 <div class="main-header">
-    <h1>♻️ TINTATEX · Gestión de Residuos</h1>
+    <h1> TINTATEX · Gestión de Residuos</h1>
     <p>Sistema de registro y trazabilidad de salida de residuos</p>
 </div>
 """, unsafe_allow_html=True)
@@ -296,14 +296,14 @@ with tab1:
         with st.expander("🚛 **1. Datos del Vehículo y Gestor**", expanded=True):
             c1, c2 = st.columns(2)
 
-            fecha = c1.date_input("📅 Fecha de salida", datetime.now())
-            empresa_sel = c1.selectbox("🏭 Empresa Gestora", options=list(GESTORES_DATA.keys()))
+            fecha = c1.date_input("Fecha de salida", datetime.now())
+            empresa_sel = c1.selectbox("Empresa Gestora", options=list(GESTORES_DATA.keys()))
             empresa_final = empresa_sel
             if empresa_sel == "Otro":
-                empresa_final = c1.text_input("✏️ Nombre del Gestor").upper().strip()
+                empresa_final = c1.text_input("Nombre del Gestor").upper().strip()
 
-            conductor = c2.text_input("👤 Conductor")
-            placa_raw = c2.text_input("🚗 Placa (Ej: ABC123)").upper().strip()
+            conductor = c2.text_input("Conductor")
+            placa_raw = c2.text_input("Placa (Ej: ABC123)").upper().strip()
             placa_valida = bool(re.match(r"^[A-Z]{3}[0-9]{3}$", placa_raw)) if placa_raw else False
 
             if placa_raw and not placa_valida:
@@ -344,9 +344,9 @@ with tab1:
             total_kg = df_temp["peso_kg"].sum()
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("⚖️ Peso Total", f"{total_kg:,.1f} kg")
-            m2.metric("📦 Pesajes", len(st.session_state.lista_temporal))
-            m3.metric("📊 Promedio", f"{df_temp['peso_kg'].mean():,.1f} kg")
+            m1.metric("Peso Total", f"{total_kg:,.1f} kg")
+            m2.metric("Pesajes", len(st.session_state.lista_temporal))
+            m3.metric("Promedio", f"{df_temp['peso_kg'].mean():,.1f} kg")
 
             with st.expander("🔍 Pesajes ingresados", expanded=True):
                 # Tabla editable con índices
@@ -372,8 +372,8 @@ with tab1:
         # ── 3. EVIDENCIAS Y ENVÍO ────────────────────────────
         st.subheader("📎 3. Evidencias y Observaciones")
         f1, f2 = st.columns(2)
-        foto_memo   = f1.file_uploader("🧾 Foto del Memo (Opcional)", type=["jpg", "png", "jpeg"])
-        foto_camion = f2.file_uploader("🚛 Foto del Camión (Opcional)", type=["jpg", "png", "jpeg"])
+        foto_memo   = f1.file_uploader("Foto del Memo (Opcional)", type=["jpg", "png", "jpeg"])
+        foto_camion = f2.file_uploader("Foto del Camión (Opcional)", type=["jpg", "png", "jpeg"])
         novedades   = st.text_area("📝 Observaciones / Novedades", placeholder="Ingrese cualquier novedad relevante...")
 
         st.markdown("")
