@@ -44,7 +44,6 @@ except Exception:
 # ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="TINTATEX · Gestión de Residuos",
-    page_icon="♻️",
     layout="wide",
 )
 
