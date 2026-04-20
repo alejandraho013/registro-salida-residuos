@@ -1,4 +1,6 @@
 streamlit
-PyGithub
 pandas
 openpyxl
+PyGithub
+plotly
+xlrd
