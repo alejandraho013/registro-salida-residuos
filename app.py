@@ -163,7 +163,7 @@ def guardar_datos(nuevas_filas: list, empresa: str, placa: str):
 
 
 # ─────────────────────────────────────────────────────────────
-# GENERADOR DE EXCEL DE DESCARGA (multi-hoja + gráficas)
+# GENERADOR DE EXCEL DE DESCARGA (Resumen + MASTER + gestores)
 # ─────────────────────────────────────────────────────────────
 def _estilo_header(ws, fila: int, n_cols: int, color_hex: str = COLOR_HEADER_XL):
     fill   = PatternFill("solid", fgColor=color_hex)
@@ -216,83 +216,182 @@ def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
                 cell.alignment = Alignment(horizontal="center")
         return fila_ini + len(df_data) + 1
 
-    # ── 1. Hoja MASTER ──────────────────────────────────────
+    cols_mostrar  = ["fecha","mes","empresa","conductor","placa","tipo_residuo","peso_kg","novedades"]
+    encabezados_m = ["Fecha","Mes","Empresa","Conductor","Placa","Tipo Residuo","Peso (kg)","Novedades"]
+
+    # ── 1. HOJA RESUMEN ─────────────────────────────────────
+    ws_s = wb.create_sheet("Resumen")
+
+    ws_s.merge_cells("A1:H1")
+    title_s = ws_s["A1"]
+    title_s.value     = "RESUMEN EJECUTIVO · TINTATEX"
+    title_s.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=14)
+    title_s.fill      = PatternFill("solid", fgColor=COLOR_HEADER_XL)
+    title_s.alignment = Alignment(horizontal="center", vertical="center")
+    ws_s.row_dimensions[1].height = 28
+
+    kpis = [
+        ("Peso total (kg)",        f"{df_filtrado['peso_kg'].sum():,.1f}"),
+        ("Registros",              len(df_filtrado)),
+        ("Empresas",               df_filtrado["empresa"].nunique()),
+        ("Tipos de residuo",       df_filtrado["tipo_residuo"].nunique()),
+        ("Promedio / registro",    f"{df_filtrado['peso_kg'].mean():,.1f} kg"),
+    ]
+    for i, (lbl, val) in enumerate(kpis, start=1):
+        c_lbl = ws_s.cell(row=3, column=i, value=lbl)
+        c_lbl.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+        c_lbl.fill      = PatternFill("solid", fgColor=COLOR_HEADER_XL)
+        c_lbl.alignment = Alignment(horizontal="center", vertical="center")
+        c_val = ws_s.cell(row=4, column=i, value=val)
+        c_val.font      = Font(bold=True, name="Arial", size=12, color="FF1A237E")
+        c_val.fill      = PatternFill("solid", fgColor=COLOR_SUBHEAD_XL)
+        c_val.alignment = Alignment(horizontal="center", vertical="center")
+    ws_s.row_dimensions[4].height = 22
+
+    # Tabla cruzada empresa × residuo con totales en fila y columna
+    pivot = (
+        df_filtrado.pivot_table(
+            index="empresa", columns="tipo_residuo",
+            values="peso_kg", aggfunc="sum", fill_value=0,
+        ).round(2)
+    )
+    pivot["TOTAL"]     = pivot.sum(axis=1).round(2)
+    pivot.loc["TOTAL"] = pivot.sum(axis=0).round(2)
+    pivot.columns.name = None
+    pivot_reset        = pivot.reset_index().rename(columns={"empresa": "Empresa"})
+
+    fila_cruce = 7
+    ws_s.cell(row=fila_cruce - 1, column=1, value="Cruce Empresa × Residuo (kg)").font = Font(bold=True, name="Arial", size=11, color="FF1A237E")
+    _escribir_tabla(ws_s, pivot_reset, list(pivot_reset.columns), fila_ini=fila_cruce)
+
+    n_filas_pivot = len(pivot_reset)
+    n_cols_pivot  = len(pivot_reset.columns)
+    fila_total_p  = fila_cruce + n_filas_pivot
+
+    # Destacar fila TOTAL (última) y columna TOTAL (última)
+    for j in range(1, n_cols_pivot + 1):
+        c = ws_s.cell(row=fila_total_p, column=j)
+        c.font = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+        c.fill = PatternFill("solid", fgColor=COLOR_HEADER_XL)
+        c.alignment = Alignment(horizontal="center")
+    for i in range(fila_cruce + 1, fila_total_p):
+        c = ws_s.cell(row=i, column=n_cols_pivot)
+        c.font = Font(bold=True, name="Arial", size=10, color="FF1A237E")
+        c.fill = PatternFill("solid", fgColor=COLOR_SUBHEAD_XL)
+
+    # Tablas auxiliares para gráficas (debajo del cruce, en columnas A-B y D-E)
+    resumen_emp = (
+        df_filtrado.groupby("empresa")["peso_kg"].sum()
+        .reset_index().sort_values("peso_kg", ascending=False)
+    )
+    resumen_res = (
+        df_filtrado.groupby("tipo_residuo")["peso_kg"].sum()
+        .reset_index().sort_values("peso_kg", ascending=False)
+    )
+    fila_aux = fila_total_p + 3
+
+    ws_s.cell(row=fila_aux, column=1, value="Empresa").font   = Font(bold=True, name="Arial")
+    ws_s.cell(row=fila_aux, column=2, value="Peso (kg)").font = Font(bold=True, name="Arial")
+    for i, row in enumerate(resumen_emp.itertuples(index=False), start=fila_aux + 1):
+        ws_s.cell(row=i, column=1, value=row.empresa)
+        ws_s.cell(row=i, column=2, value=round(row.peso_kg, 2))
+    n_emp = len(resumen_emp)
+
+    ws_s.cell(row=fila_aux, column=4, value="Residuo").font   = Font(bold=True, name="Arial")
+    ws_s.cell(row=fila_aux, column=5, value="Peso (kg)").font = Font(bold=True, name="Arial")
+    for i, row in enumerate(resumen_res.itertuples(index=False), start=fila_aux + 1):
+        ws_s.cell(row=i, column=4, value=row.tipo_residuo)
+        ws_s.cell(row=i, column=5, value=round(row.peso_kg, 2))
+    n_res = len(resumen_res)
+
+    # Gráfica barras (empresa)
+    bar_chart = BarChart()
+    bar_chart.type         = "col"
+    bar_chart.title        = "Peso total por empresa (kg)"
+    bar_chart.y_axis.title = "kg"
+    bar_chart.x_axis.title = "Empresa"
+    bar_chart.width        = 16
+    bar_chart.height       = 10
+    bar_chart.style        = 10
+    bar_chart.add_data(
+        Reference(ws_s, min_col=2, min_row=fila_aux, max_row=fila_aux + n_emp),
+        titles_from_data=True,
+    )
+    bar_chart.set_categories(
+        Reference(ws_s, min_col=1, min_row=fila_aux + 1, max_row=fila_aux + n_emp),
+    )
+    bar_chart.series[0].graphicalProperties.solidFill = "1A237E"
+    ws_s.add_chart(bar_chart, f"G{fila_aux}")
+
+    # Gráfica pie (residuo)
+    pie_chart = PieChart()
+    pie_chart.title  = "Distribución por tipo de residuo"
+    pie_chart.width  = 16
+    pie_chart.height = 10
+    pie_chart.style  = 10
+    pie_chart.add_data(
+        Reference(ws_s, min_col=5, min_row=fila_aux, max_row=fila_aux + n_res),
+        titles_from_data=True,
+    )
+    pie_chart.set_categories(
+        Reference(ws_s, min_col=4, min_row=fila_aux + 1, max_row=fila_aux + n_res),
+    )
+    pie_chart.dataLabels = DataLabelList(showPercent=True, showCatName=True)
+    ws_s.add_chart(pie_chart, f"G{fila_aux + 21}")
+
+    _autowidth(ws_s)
+
+    # ── 2. HOJA MASTER (ordenada por empresa, con subtotales) ──
     ws_m = wb.create_sheet("MASTER")
     ws_m.freeze_panes = "A2"
 
-    cols_mostrar = ["fecha","mes","empresa","conductor","placa","tipo_residuo","peso_kg","novedades"]
-    df_m = df_filtrado[cols_mostrar].copy()
-    df_m["fecha"] = df_m["fecha"].astype(str)
+    for j, h in enumerate(encabezados_m, start=1):
+        ws_m.cell(row=1, column=j, value=h)
+    _estilo_header(ws_m, 1, len(encabezados_m))
 
-    encabezados_m = ["Fecha","Mes","Empresa","Conductor","Placa","Tipo Residuo","Peso (kg)","Novedades"]
-    _escribir_tabla(ws_m, df_m, encabezados_m)
+    df_ord = df_filtrado.sort_values(["empresa", "fecha"])[cols_mostrar].copy()
+    df_ord["fecha"] = df_ord["fecha"].astype(str)
 
-    # Fila de totales
-    fila_total = len(df_m) + 2
-    ws_m.cell(row=fila_total, column=1, value="TOTAL").font = Font(bold=True, name="Arial", size=10)
-    ws_m.cell(row=fila_total, column=7, value=f"=SUM(G2:G{fila_total-1})").font = Font(bold=True, name="Arial", size=10)
-    ws_m.cell(row=fila_total, column=7).number_format = "#,##0.0"
+    fila_actual   = 2
+    total_general = 0.0
+    n_cols_m      = len(encabezados_m)
+
+    for empresa, grupo in df_ord.groupby("empresa", sort=True):
+        color_emp = COLORES_GESTOR_XL.get(empresa, COLOR_HEADER_XL)
+
+        for _, row in grupo.iterrows():
+            for j, col in enumerate(cols_mostrar, start=1):
+                cell = ws_m.cell(row=fila_actual, column=j, value=row[col])
+                cell.font      = FUENTE_BASE
+                cell.fill      = FILL_ALT if fila_actual % 2 == 0 else PatternFill()
+                cell.alignment = Alignment(horizontal="center")
+            ws_m.cell(row=fila_actual, column=7).number_format = "#,##0.0"
+            fila_actual += 1
+
+        subtotal = float(grupo["peso_kg"].sum())
+        total_general += subtotal
+
+        for j in range(1, n_cols_m + 1):
+            c = ws_m.cell(row=fila_actual, column=j)
+            c.fill      = PatternFill("solid", fgColor=color_emp)
+            c.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=10)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws_m.cell(row=fila_actual, column=1, value=f"Subtotal — {empresa}")
+        ws_m.cell(row=fila_actual, column=7, value=round(subtotal, 2)).number_format = "#,##0.0"
+        fila_actual += 1
+
+    for j in range(1, n_cols_m + 1):
+        c = ws_m.cell(row=fila_actual, column=j)
+        c.fill      = PatternFill("solid", fgColor=COLOR_HEADER_XL)
+        c.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=11)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    ws_m.cell(row=fila_actual, column=1, value="TOTAL GENERAL")
+    ws_m.cell(row=fila_actual, column=7, value=round(total_general, 2)).number_format = "#,##0.0"
+    ws_m.row_dimensions[fila_actual].height = 22
 
     _autowidth(ws_m)
 
-    # ── Gráfica de barras (peso por empresa) en MASTER ──────
-    resumen_emp = (
-        df_filtrado.groupby("empresa")["peso_kg"].sum()
-        .reset_index()
-        .sort_values("peso_kg", ascending=False)
-    )
-    fila_graf = fila_total + 3
-    ws_m.cell(row=fila_graf, column=1, value="Empresa").font = Font(bold=True, name="Arial")
-    ws_m.cell(row=fila_graf, column=2, value="Peso (kg)").font = Font(bold=True, name="Arial")
-    for i, row in enumerate(resumen_emp.itertuples(index=False), start=fila_graf + 1):
-        ws_m.cell(row=i, column=1, value=row.empresa)
-        ws_m.cell(row=i, column=2, value=round(row.peso_kg, 2))
-
-    n_emp = len(resumen_emp)
-    bar_chart = BarChart()
-    bar_chart.type           = "col"
-    bar_chart.title          = "Peso total por empresa (kg)"
-    bar_chart.y_axis.title   = "kg"
-    bar_chart.x_axis.title   = "Empresa"
-    bar_chart.width          = 18
-    bar_chart.height         = 12
-    bar_chart.style          = 10
-
-    data_ref  = Reference(ws_m, min_col=2, min_row=fila_graf, max_row=fila_graf + n_emp)
-    cats_ref  = Reference(ws_m, min_col=1, min_row=fila_graf + 1, max_row=fila_graf + n_emp)
-    bar_chart.add_data(data_ref, titles_from_data=True)
-    bar_chart.set_categories(cats_ref)
-    bar_chart.series[0].graphicalProperties.solidFill = "1A237E"
-    ws_m.add_chart(bar_chart, f"D{fila_graf}")
-
-    # ── Gráfica de pie (distribución por residuo) en MASTER ─
-    resumen_res = (
-        df_filtrado.groupby("tipo_residuo")["peso_kg"].sum()
-        .reset_index()
-        .sort_values("peso_kg", ascending=False)
-    )
-    col_pie = 10   # columna J para tabla auxiliar del pie
-    ws_m.cell(row=fila_graf, column=col_pie,     value="Residuo").font = Font(bold=True, name="Arial")
-    ws_m.cell(row=fila_graf, column=col_pie + 1, value="Peso (kg)").font = Font(bold=True, name="Arial")
-    for i, row in enumerate(resumen_res.itertuples(index=False), start=fila_graf + 1):
-        ws_m.cell(row=i, column=col_pie,     value=row.tipo_residuo)
-        ws_m.cell(row=i, column=col_pie + 1, value=round(row.peso_kg, 2))
-
-    n_res    = len(resumen_res)
-    pie_chart = PieChart()
-    pie_chart.title  = "Distribución por tipo de residuo"
-    pie_chart.width  = 18
-    pie_chart.height = 12
-    pie_chart.style  = 10
-
-    pie_data = Reference(ws_m, min_col=col_pie + 1, min_row=fila_graf, max_row=fila_graf + n_res)
-    pie_cats = Reference(ws_m, min_col=col_pie,     min_row=fila_graf + 1, max_row=fila_graf + n_res)
-    pie_chart.add_data(pie_data, titles_from_data=True)
-    pie_chart.set_categories(pie_cats)
-    pie_chart.dataLabels = DataLabelList(showPercent=True, showCatName=True)
-    ws_m.add_chart(pie_chart, f"D{fila_graf + 22}")
-
-    # ── 2. Hoja por cada gestor ──────────────────────────────
+    # ── 3. HOJA POR CADA GESTOR ─────────────────────────────
     gestores_presentes = df_filtrado["empresa"].dropna().unique()
     for gestor in sorted(gestores_presentes):
         nombre_hoja = _nombre_hoja(gestor)[:31]
@@ -301,9 +400,8 @@ def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
 
         color_hdr = COLORES_GESTOR_XL.get(gestor, COLOR_HEADER_XL)
         ws_g = wb.create_sheet(nombre_hoja)
-        ws_g.freeze_panes = "A2"
+        ws_g.freeze_panes = "A3"
 
-        # Título
         ws_g.merge_cells("A1:H1")
         title_cell = ws_g["A1"]
         title_cell.value     = f"REGISTROS — {gestor.upper()}"
@@ -315,66 +413,15 @@ def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
         _escribir_tabla(ws_g, df_g, encabezados_m, fila_ini=2, color_hdr=color_hdr)
 
         fila_tot_g = len(df_g) + 3
-        ws_g.cell(row=fila_tot_g, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
-        ws_g.cell(row=fila_tot_g, column=7, value=f"=SUM(G3:G{fila_tot_g-1})").font = Font(bold=True, name="Arial")
-        ws_g.cell(row=fila_tot_g, column=7).number_format = "#,##0.0"
+        for j in range(1, n_cols_m + 1):
+            c = ws_g.cell(row=fila_tot_g, column=j)
+            c.fill      = PatternFill("solid", fgColor=color_hdr)
+            c.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=11)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws_g.cell(row=fila_tot_g, column=1, value=f"TOTAL {gestor.upper()}")
+        ws_g.cell(row=fila_tot_g, column=7, value=f"=SUM(G3:G{fila_tot_g-1})").number_format = "#,##0.0"
 
         _autowidth(ws_g)
-
-    # ── 3. Hoja Resumen por empresa ──────────────────────────
-    ws_e = wb.create_sheet("Por empresa")
-    df_emp = (
-        df_filtrado.groupby("empresa")
-        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"), peso_promedio=("peso_kg","mean"))
-        .round(2).reset_index().sort_values("peso_total", ascending=False)
-    )
-    df_emp.columns = ["Empresa","Registros","Peso total (kg)","Peso promedio (kg)"]
-    _escribir_tabla(ws_e, df_emp, list(df_emp.columns))
-    fila_tot_e = len(df_emp) + 2
-    ws_e.cell(row=fila_tot_e, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
-    ws_e.cell(row=fila_tot_e, column=2, value=f"=SUM(B2:B{fila_tot_e-1})").font = Font(bold=True, name="Arial")
-    ws_e.cell(row=fila_tot_e, column=3, value=f"=SUM(C2:C{fila_tot_e-1})").font = Font(bold=True, name="Arial")
-    _autowidth(ws_e)
-
-    # ── 4. Hoja Resumen por residuo ──────────────────────────
-    ws_r = wb.create_sheet("Por residuo")
-    df_res = (
-        df_filtrado.groupby("tipo_residuo")
-        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"), peso_promedio=("peso_kg","mean"))
-        .round(2).reset_index().sort_values("peso_total", ascending=False)
-    )
-    df_res.columns = ["Tipo de residuo","Registros","Peso total (kg)","Peso promedio (kg)"]
-    _escribir_tabla(ws_r, df_res, list(df_res.columns))
-    fila_tot_r = len(df_res) + 2
-    ws_r.cell(row=fila_tot_r, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
-    ws_r.cell(row=fila_tot_r, column=2, value=f"=SUM(B2:B{fila_tot_r-1})").font = Font(bold=True, name="Arial")
-    ws_r.cell(row=fila_tot_r, column=3, value=f"=SUM(C2:C{fila_tot_r-1})").font = Font(bold=True, name="Arial")
-    _autowidth(ws_r)
-
-    # ── 5. Hoja por fecha ────────────────────────────────────
-    ws_f = wb.create_sheet("Por fecha")
-    df_fecha = (
-        df_filtrado.groupby(df_filtrado["fecha"].dt.date)
-        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"))
-        .round(2).reset_index().sort_values("fecha", ascending=False)
-    )
-    df_fecha.columns = ["Fecha","Registros","Peso total (kg)"]
-    df_fecha["Fecha"] = df_fecha["Fecha"].astype(str)
-    _escribir_tabla(ws_f, df_fecha, list(df_fecha.columns))
-    _autowidth(ws_f)
-
-    # ── 6. Tabla cruzada empresa × residuo ───────────────────
-    ws_p = wb.create_sheet("Cruce empresa-residuo")
-    pivot = (
-        df_filtrado.pivot_table(
-            index="empresa", columns="tipo_residuo",
-            values="peso_kg", aggfunc="sum", fill_value=0,
-        ).round(2).reset_index()
-    )
-    pivot.columns.name = None
-    encabezados_p = list(pivot.columns)
-    _escribir_tabla(ws_p, pivot, encabezados_p)
-    _autowidth(ws_p)
 
     output = io.BytesIO()
     wb.save(output)
