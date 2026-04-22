@@ -5,6 +5,11 @@ from datetime import datetime
 import re
 import io
 import plotly.express as px
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.chart import BarChart, PieChart, Reference
+from openpyxl.chart.series import DataPoint
+from openpyxl.utils import get_column_letter
 
 # ─────────────────────────────────────────────────────────────
 # CONFIGURACIÓN
@@ -26,9 +31,16 @@ COLORES_EMPRESA = {
     "Quimetales Peligrosos":    "#F44336",
 }
 
-# ─────────────────────────────────────────────────────────────
-# SECRETS
-# ─────────────────────────────────────────────────────────────
+# Colores openpyxl para cada gestor (ARGB sin #)
+COLORES_GESTOR_XL = {
+    "CORPOGESTAR":              "FF2196F3",
+    "Recicla Oriente":          "FF4CAF50",
+    "Quimetales NO Peligrosos": "FFFF9800",
+    "Quimetales Peligrosos":    "FFF44336",
+}
+COLOR_HEADER_XL   = "FF1A237E"   # azul oscuro encabezados
+COLOR_SUBHEAD_XL  = "FFE8EAF6"   # lila muy claro filas alternas / sub-encabezados
+
 try:
     TOKEN     = st.secrets["TOKEN"]
     REPO_NAME = st.secrets.get("REPO_NAME", REPO_NAME)
@@ -43,12 +55,22 @@ st.set_page_config(page_title="TINTATEX · Gestión de Residuos", layout="wide")
 
 st.markdown("""
 <style>
-.main-header { background: linear-gradient(135deg,#1a237e 0%,#283593 100%); padding:1.5rem; border-radius:12px; color:white; margin-bottom:1.5rem; }
-.kpi-card { background:white; border-radius:10px; padding:1rem; border-left:4px solid #1a237e; box-shadow:0 2px 5px rgba(0,0,0,.1); text-align:center; }
+.main-header {
+    background: linear-gradient(135deg,#1a237e 0%,#283593 100%);
+    padding:1.5rem; border-radius:12px; color:white; margin-bottom:1.5rem;
+}
+.kpi-card {
+    background:white; border-radius:10px; padding:1rem;
+    border-left:4px solid #1a237e;
+    box-shadow:0 2px 5px rgba(0,0,0,.1); text-align:center;
+}
 .kpi-value { font-size:1.8rem; font-weight:700; color:#1a237e; }
 .kpi-label { font-size:0.9rem; color:#666; }
 </style>
-<div class="main-header"><h1>🏭 TINTATEX · Gestión de Residuos</h1><p>Registro de Pesajes y Control de Carga</p></div>
+<div class="main-header">
+  <h1>🏭 TINTATEX · Gestión de Residuos</h1>
+  <p>Registro de Pesajes y Control de Carga</p>
+</div>
 """, unsafe_allow_html=True)
 
 for key, default in [("lista_temporal", []), ("envio_exitoso", False)]:
@@ -56,26 +78,24 @@ for key, default in [("lista_temporal", []), ("envio_exitoso", False)]:
         st.session_state[key] = default
 
 # ─────────────────────────────────────────────────────────────
-# FUNCIONES DE DATOS
+# COLUMNAS ESTÁNDAR
 # ─────────────────────────────────────────────────────────────
 COLUMNAS_MASTER = ["fecha","mes","empresa","conductor","placa","tipo_residuo","peso_kg","novedades"]
 
+# ─────────────────────────────────────────────────────────────
+# FUNCIONES DE DATOS — GITHUB
+# ─────────────────────────────────────────────────────────────
 def _get_repo():
     return Github(TOKEN).get_repo(REPO_NAME)
 
-@st.cache_data(ttl=120)   # TTL corto para ver datos recién guardados
+
+@st.cache_data(ttl=120)
 def cargar_datos_github() -> pd.DataFrame:
-    """
-    Carga database.xlsx desde GitHub.
-    Retorna DataFrame vacío si el archivo no existe todavía.
-    Muestra un error visible si hay otro problema (token, permisos, etc.).
-    """
     try:
         repo = _get_repo()
         try:
             f = repo.get_contents("database.xlsx")
         except Exception:
-            # El archivo aún no existe → DataFrame vacío, sin error ruidoso
             return pd.DataFrame(columns=COLUMNAS_MASTER)
 
         df = pd.read_excel(
@@ -83,14 +103,11 @@ def cargar_datos_github() -> pd.DataFrame:
             sheet_name="MASTER",
             engine="openpyxl",
         )
-
-        # Normalizar columnas obligatorias
         df["fecha"] = pd.to_datetime(df.get("fecha"), errors="coerce")
         if "mes" not in df.columns or df["mes"].isna().all():
             df["mes"] = df["fecha"].dt.strftime("%B_%Y")
         if "peso_kg" in df.columns:
             df["peso_kg"] = pd.to_numeric(df["peso_kg"], errors="coerce").fillna(0)
-
         return df
 
     except Exception as e:
@@ -98,8 +115,13 @@ def cargar_datos_github() -> pd.DataFrame:
         return pd.DataFrame(columns=COLUMNAS_MASTER)
 
 
-def guardar_datos(nuevas_filas: list[dict], empresa: str, placa: str):
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+def _nombre_hoja(empresa: str) -> str:
+    nombre = re.sub(r'[\\/*?:\[\]]', "", empresa).strip()[:31]
+    return nombre.upper() if nombre else "OTROS"
+
+
+def guardar_datos(nuevas_filas: list, empresa: str, placa: str):
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
     repo = _get_repo()
 
     try:
@@ -111,20 +133,16 @@ def guardar_datos(nuevas_filas: list[dict], empresa: str, placa: str):
         )
         sha = xlsx_file.sha
     except Exception:
-        # El archivo no existe → lo creamos desde cero
         dicc = {}
-        sha = None
+        sha  = None
 
-    df_nuevos = pd.DataFrame(nuevas_filas)
+    df_nuevos    = pd.DataFrame(nuevas_filas)
+    nombre_hoja  = _nombre_hoja(empresa)
 
-    # Hoja MASTER
     dicc["MASTER"] = pd.concat(
         [dicc.get("MASTER", pd.DataFrame(columns=COLUMNAS_MASTER)), df_nuevos],
         ignore_index=True,
     )
-
-    # Hoja por empresa
-    nombre_hoja = re.sub(r'[\\/*?:\[\]]', "", empresa)[:30].upper() or "OTROS"
     dicc[nombre_hoja] = pd.concat(
         [dicc.get(nombre_hoja, pd.DataFrame(columns=COLUMNAS_MASTER)), df_nuevos],
         ignore_index=True,
@@ -141,8 +159,225 @@ def guardar_datos(nuevas_filas: list[dict], empresa: str, placa: str):
     else:
         repo.create_file("database.xlsx", commit_msg, output.getvalue())
 
-    # Invalidar caché para que Reportes muestre los datos nuevos de inmediato
     cargar_datos_github.clear()
+
+
+# ─────────────────────────────────────────────────────────────
+# GENERADOR DE EXCEL DE DESCARGA (multi-hoja + gráficas)
+# ─────────────────────────────────────────────────────────────
+def _estilo_header(ws, fila: int, n_cols: int, color_hex: str = COLOR_HEADER_XL):
+    fill   = PatternFill("solid", fgColor=color_hex)
+    fuente = Font(bold=True, color="FFFFFFFF", name="Arial", size=11)
+    borde  = Border(
+        bottom=Side(style="medium", color="FFFFFFFF"),
+    )
+    for col in range(1, n_cols + 1):
+        cell = ws.cell(row=fila, column=col)
+        cell.fill   = fill
+        cell.font   = fuente
+        cell.border = borde
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+
+def _autowidth(ws):
+    for col_cells in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col_cells[0].column)
+        for cell in col_cells:
+            try:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = min(max_len + 4, 40)
+
+
+def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
+    wb = Workbook()
+    wb.remove(wb.active)  # quitar hoja vacía por defecto
+
+    FUENTE_BASE = Font(name="Arial", size=10)
+    FILL_ALT    = PatternFill("solid", fgColor="FFF5F5F5")
+
+    def _escribir_tabla(ws, df_data, encabezados, fila_ini=1, col_ini=1, color_hdr=COLOR_HEADER_XL):
+        """Escribe encabezados + filas con filas alternas y devuelve fila siguiente."""
+        for j, h in enumerate(encabezados, start=col_ini):
+            ws.cell(row=fila_ini, column=j, value=h)
+        _estilo_header(ws, fila_ini, len(encabezados) + col_ini - 1, color_hdr)
+
+        for i, row in enumerate(df_data.itertuples(index=False), start=fila_ini + 1):
+            fill_row = FILL_ALT if i % 2 == 0 else PatternFill()
+            for j, val in enumerate(row, start=col_ini):
+                cell = ws.cell(row=i, column=j, value=val)
+                cell.font = FUENTE_BASE
+                cell.fill = fill_row
+                cell.alignment = Alignment(horizontal="center")
+        return fila_ini + len(df_data) + 1
+
+    # ── 1. Hoja MASTER ──────────────────────────────────────
+    ws_m = wb.create_sheet("MASTER")
+    ws_m.freeze_panes = "A2"
+
+    cols_mostrar = ["fecha","mes","empresa","conductor","placa","tipo_residuo","peso_kg","novedades"]
+    df_m = df_filtrado[cols_mostrar].copy()
+    df_m["fecha"] = df_m["fecha"].astype(str)
+
+    encabezados_m = ["Fecha","Mes","Empresa","Conductor","Placa","Tipo Residuo","Peso (kg)","Novedades"]
+    _escribir_tabla(ws_m, df_m, encabezados_m)
+
+    # Fila de totales
+    fila_total = len(df_m) + 2
+    ws_m.cell(row=fila_total, column=1, value="TOTAL").font = Font(bold=True, name="Arial", size=10)
+    ws_m.cell(row=fila_total, column=7, value=f"=SUM(G2:G{fila_total-1})").font = Font(bold=True, name="Arial", size=10)
+    ws_m.cell(row=fila_total, column=7).number_format = "#,##0.0"
+
+    _autowidth(ws_m)
+
+    # ── Gráfica de barras (peso por empresa) en MASTER ──────
+    resumen_emp = (
+        df_filtrado.groupby("empresa")["peso_kg"].sum()
+        .reset_index()
+        .sort_values("peso_kg", ascending=False)
+    )
+    fila_graf = fila_total + 3
+    ws_m.cell(row=fila_graf, column=1, value="Empresa").font = Font(bold=True, name="Arial")
+    ws_m.cell(row=fila_graf, column=2, value="Peso (kg)").font = Font(bold=True, name="Arial")
+    for i, row in enumerate(resumen_emp.itertuples(index=False), start=fila_graf + 1):
+        ws_m.cell(row=i, column=1, value=row.empresa)
+        ws_m.cell(row=i, column=2, value=round(row.peso_kg, 2))
+
+    n_emp = len(resumen_emp)
+    bar_chart = BarChart()
+    bar_chart.type           = "col"
+    bar_chart.title          = "Peso total por empresa (kg)"
+    bar_chart.y_axis.title   = "kg"
+    bar_chart.x_axis.title   = "Empresa"
+    bar_chart.width          = 18
+    bar_chart.height         = 12
+    bar_chart.style          = 10
+
+    data_ref  = Reference(ws_m, min_col=2, min_row=fila_graf, max_row=fila_graf + n_emp)
+    cats_ref  = Reference(ws_m, min_col=1, min_row=fila_graf + 1, max_row=fila_graf + n_emp)
+    bar_chart.add_data(data_ref, titles_from_data=True)
+    bar_chart.set_categories(cats_ref)
+    bar_chart.series[0].graphicalProperties.solidFill = "1A237E"
+    ws_m.add_chart(bar_chart, f"D{fila_graf}")
+
+    # ── Gráfica de pie (distribución por residuo) en MASTER ─
+    resumen_res = (
+        df_filtrado.groupby("tipo_residuo")["peso_kg"].sum()
+        .reset_index()
+        .sort_values("peso_kg", ascending=False)
+    )
+    col_pie = 10   # columna J para tabla auxiliar del pie
+    ws_m.cell(row=fila_graf, column=col_pie,     value="Residuo").font = Font(bold=True, name="Arial")
+    ws_m.cell(row=fila_graf, column=col_pie + 1, value="Peso (kg)").font = Font(bold=True, name="Arial")
+    for i, row in enumerate(resumen_res.itertuples(index=False), start=fila_graf + 1):
+        ws_m.cell(row=i, column=col_pie,     value=row.tipo_residuo)
+        ws_m.cell(row=i, column=col_pie + 1, value=round(row.peso_kg, 2))
+
+    n_res    = len(resumen_res)
+    pie_chart = PieChart()
+    pie_chart.title  = "Distribución por tipo de residuo"
+    pie_chart.width  = 18
+    pie_chart.height = 12
+    pie_chart.style  = 10
+
+    pie_data = Reference(ws_m, min_col=col_pie + 1, min_row=fila_graf, max_row=fila_graf + n_res)
+    pie_cats = Reference(ws_m, min_col=col_pie,     min_row=fila_graf + 1, max_row=fila_graf + n_res)
+    pie_chart.add_data(pie_data, titles_from_data=True)
+    pie_chart.set_categories(pie_cats)
+    pie_chart.dataLabels              = pie_chart.dataLabels or type('obj', (object,), {'showPercent': True, 'showCatName': True})()
+    ws_m.add_chart(pie_chart, f"D{fila_graf + 22}")
+
+    # ── 2. Hoja por cada gestor ──────────────────────────────
+    gestores_presentes = df_filtrado["empresa"].dropna().unique()
+    for gestor in sorted(gestores_presentes):
+        nombre_hoja = _nombre_hoja(gestor)[:31]
+        df_g = df_filtrado[df_filtrado["empresa"] == gestor][cols_mostrar].copy()
+        df_g["fecha"] = df_g["fecha"].astype(str)
+
+        color_hdr = COLORES_GESTOR_XL.get(gestor, COLOR_HEADER_XL)
+        ws_g = wb.create_sheet(nombre_hoja)
+        ws_g.freeze_panes = "A2"
+
+        # Título
+        ws_g.merge_cells("A1:H1")
+        title_cell = ws_g["A1"]
+        title_cell.value     = f"REGISTROS — {gestor.upper()}"
+        title_cell.font      = Font(bold=True, color="FFFFFFFF", name="Arial", size=12)
+        title_cell.fill      = PatternFill("solid", fgColor=color_hdr)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws_g.row_dimensions[1].height = 22
+
+        _escribir_tabla(ws_g, df_g, encabezados_m, fila_ini=2, color_hdr=color_hdr)
+
+        fila_tot_g = len(df_g) + 3
+        ws_g.cell(row=fila_tot_g, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
+        ws_g.cell(row=fila_tot_g, column=7, value=f"=SUM(G3:G{fila_tot_g-1})").font = Font(bold=True, name="Arial")
+        ws_g.cell(row=fila_tot_g, column=7).number_format = "#,##0.0"
+
+        _autowidth(ws_g)
+
+    # ── 3. Hoja Resumen por empresa ──────────────────────────
+    ws_e = wb.create_sheet("Por empresa")
+    df_emp = (
+        df_filtrado.groupby("empresa")
+        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"), peso_promedio=("peso_kg","mean"))
+        .round(2).reset_index().sort_values("peso_total", ascending=False)
+    )
+    df_emp.columns = ["Empresa","Registros","Peso total (kg)","Peso promedio (kg)"]
+    _escribir_tabla(ws_e, df_emp, list(df_emp.columns))
+    fila_tot_e = len(df_emp) + 2
+    ws_e.cell(row=fila_tot_e, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
+    ws_e.cell(row=fila_tot_e, column=2, value=f"=SUM(B2:B{fila_tot_e-1})").font = Font(bold=True, name="Arial")
+    ws_e.cell(row=fila_tot_e, column=3, value=f"=SUM(C2:C{fila_tot_e-1})").font = Font(bold=True, name="Arial")
+    _autowidth(ws_e)
+
+    # ── 4. Hoja Resumen por residuo ──────────────────────────
+    ws_r = wb.create_sheet("Por residuo")
+    df_res = (
+        df_filtrado.groupby("tipo_residuo")
+        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"), peso_promedio=("peso_kg","mean"))
+        .round(2).reset_index().sort_values("peso_total", ascending=False)
+    )
+    df_res.columns = ["Tipo de residuo","Registros","Peso total (kg)","Peso promedio (kg)"]
+    _escribir_tabla(ws_r, df_res, list(df_res.columns))
+    fila_tot_r = len(df_res) + 2
+    ws_r.cell(row=fila_tot_r, column=1, value="TOTAL").font = Font(bold=True, name="Arial")
+    ws_r.cell(row=fila_tot_r, column=2, value=f"=SUM(B2:B{fila_tot_r-1})").font = Font(bold=True, name="Arial")
+    ws_r.cell(row=fila_tot_r, column=3, value=f"=SUM(C2:C{fila_tot_r-1})").font = Font(bold=True, name="Arial")
+    _autowidth(ws_r)
+
+    # ── 5. Hoja por fecha ────────────────────────────────────
+    ws_f = wb.create_sheet("Por fecha")
+    df_fecha = (
+        df_filtrado.groupby(df_filtrado["fecha"].dt.date)
+        .agg(registros=("peso_kg","count"), peso_total=("peso_kg","sum"))
+        .round(2).reset_index().sort_values("fecha", ascending=False)
+    )
+    df_fecha.columns = ["Fecha","Registros","Peso total (kg)"]
+    df_fecha["Fecha"] = df_fecha["Fecha"].astype(str)
+    _escribir_tabla(ws_f, df_fecha, list(df_fecha.columns))
+    _autowidth(ws_f)
+
+    # ── 6. Tabla cruzada empresa × residuo ───────────────────
+    ws_p = wb.create_sheet("Cruce empresa-residuo")
+    pivot = (
+        df_filtrado.pivot_table(
+            index="empresa", columns="tipo_residuo",
+            values="peso_kg", aggfunc="sum", fill_value=0,
+        ).round(2).reset_index()
+    )
+    pivot.columns.name = None
+    encabezados_p = list(pivot.columns)
+    _escribir_tabla(ws_p, pivot, encabezados_p)
+    _autowidth(ws_p)
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
 
 # ─────────────────────────────────────────────────────────────
 # INTERFAZ
@@ -160,8 +395,8 @@ with tab1:
     else:
         with st.expander("🚛 1. Datos del Vehículo", expanded=True):
             c1, c2 = st.columns(2)
-            fecha      = c1.date_input("Fecha", datetime.now())
-            emp_sel    = c1.selectbox("Empresa Gestora", options=list(GESTORES_DATA.keys()))
+            fecha     = c1.date_input("Fecha", datetime.now())
+            emp_sel   = c1.selectbox("Empresa Gestora", options=list(GESTORES_DATA.keys()))
             empresa_final = (
                 c1.text_input("Nombre Manual").upper().strip()
                 if emp_sel == "Otro"
@@ -192,9 +427,7 @@ with tab1:
             elif peso <= 0:
                 st.error("El peso debe ser mayor a 0")
             else:
-                st.session_state.lista_temporal.append(
-                    {"tipo_residuo": res_final, "peso_kg": peso}
-                )
+                st.session_state.lista_temporal.append({"tipo_residuo": res_final, "peso_kg": peso})
                 st.toast(f"✅ {res_final} — {peso} kg añadido")
 
         if st.session_state.lista_temporal:
@@ -251,7 +484,7 @@ with tab1:
 # ── TAB 2: REPORTES ──────────────────────────────────────────
 with tab2:
     col_ref, _ = st.columns([1, 5])
-    if col_ref.button("🔄 Actualizar", key="refresh"):
+    if col_ref.button("🔄 Actualizar datos", key="refresh"):
         cargar_datos_github.clear()
         st.rerun()
 
@@ -259,7 +492,7 @@ with tab2:
         df = cargar_datos_github()
 
     if df.empty:
-        st.info("📭 Sin datos registrados aún.")
+        st.info("📭 Sin datos registrados aún. Realiza tu primer registro en la pestaña anterior.")
     else:
         # ── FILTROS ──────────────────────────────────────────
         with st.expander("🔍 Filtros", expanded=True):
@@ -271,7 +504,6 @@ with tab2:
 
             f1, f2, f3, f4 = st.columns([2, 2, 2, 2])
 
-            # Filtro de fechas
             fecha_min = df["fecha"].min().date()
             fecha_max = df["fecha"].max().date()
 
@@ -289,31 +521,29 @@ with tab2:
             else:
                 mask_fecha = pd.Series([True] * len(df), index=df.index)
 
-            # Filtro empresa
             empresas = ["Todas"] + sorted(df["empresa"].dropna().unique().tolist())
-            emp_sel = f3.selectbox("Empresa", empresas)
-            mask_emp = df["empresa"] == emp_sel if emp_sel != "Todas" else pd.Series([True] * len(df), index=df.index)
+            emp_fil  = f3.selectbox("Empresa", empresas)
+            mask_emp = (df["empresa"] == emp_fil) if emp_fil != "Todas" else pd.Series([True] * len(df), index=df.index)
 
-            # Filtro residuo
             residuos = ["Todos"] + sorted(df["tipo_residuo"].dropna().unique().tolist())
-            res_sel = f4.selectbox("Tipo de residuo", residuos)
-            mask_res = df["tipo_residuo"] == res_sel if res_sel != "Todos" else pd.Series([True] * len(df), index=df.index)
+            res_fil  = f4.selectbox("Tipo de residuo", residuos)
+            mask_res = (df["tipo_residuo"] == res_fil) if res_fil != "Todos" else pd.Series([True] * len(df), index=df.index)
 
         df_f = df[mask_fecha & mask_emp & mask_res].copy()
 
         if df_f.empty:
             st.warning("⚠️ No hay registros con los filtros seleccionados.")
         else:
-            # ── KPIs ────────────────────────────────────────
+            # ── KPIs ─────────────────────────────────────────
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Peso total", f"{df_f['peso_kg'].sum():,.1f} kg")
-            k2.metric("Registros",  len(df_f))
-            k3.metric("Empresas",   df_f["empresa"].nunique())
-            k4.metric("Promedio / registro", f"{df_f['peso_kg'].mean():,.1f} kg")
+            k1.metric("Peso total",          f"{df_f['peso_kg'].sum():,.1f} kg")
+            k2.metric("Registros",            len(df_f))
+            k3.metric("Empresas",             df_f["empresa"].nunique())
+            k4.metric("Promedio / registro",  f"{df_f['peso_kg'].mean():,.1f} kg")
 
             st.divider()
 
-            # ── GRÁFICAS ────────────────────────────────────
+            # ── GRÁFICAS ──────────────────────────────────────
             g1, g2 = st.columns(2)
 
             with g1:
@@ -339,12 +569,10 @@ with tab2:
                 fig_pie.update_layout(margin=dict(t=40, b=0), showlegend=False)
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-            # Línea temporal (solo si hay más de 1 día distinto)
             if df_f["fecha"].dt.date.nunique() > 1:
                 df_tiempo = (
                     df_f.groupby(df_f["fecha"].dt.date)["peso_kg"]
-                    .sum()
-                    .reset_index()
+                    .sum().reset_index()
                     .rename(columns={"fecha": "Fecha", "peso_kg": "Peso (kg)"})
                 )
                 fig_line = px.line(
@@ -355,7 +583,7 @@ with tab2:
                 fig_line.update_layout(margin=dict(t=40, b=0))
                 st.plotly_chart(fig_line, use_container_width=True)
 
-            # ── TABLA DETALLE ────────────────────────────────
+            # ── TABLA DETALLE ─────────────────────────────────
             st.subheader("Detalle de registros")
             st.dataframe(
                 df_f.sort_values("fecha", ascending=False).reset_index(drop=True),
@@ -363,81 +591,20 @@ with tab2:
                 hide_index=True,
             )
 
-            # ── DESCARGA EXCEL MULTI-HOJA ────────────────────
-            def construir_excel(df_filtrado: pd.DataFrame) -> bytes:
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            # ── DESCARGA ──────────────────────────────────────
+            sufijo = (
+                f"{emp_fil.replace(' ','_')}__"
+                f"{res_fil.replace(' ','_')}__"
+                f"{tipo_rango.replace(' ','_')}"
+            ).replace("Todas", "todas").replace("Todos", "todos")
+            nombre_archivo = f"Reporte_TINTATEX_{sufijo}.xlsx"
 
-                    # Hoja 1: todos los registros filtrados
-                    df_filtrado.to_excel(writer, sheet_name="Registros", index=False)
-
-                    # Hoja 2: resumen por empresa
-                    resumen_emp = (
-                        df_filtrado.groupby("empresa")
-                        .agg(
-                            registros=("peso_kg", "count"),
-                            peso_total_kg=("peso_kg", "sum"),
-                            peso_promedio_kg=("peso_kg", "mean"),
-                        )
-                        .round(2)
-                        .reset_index()
-                        .sort_values("peso_total_kg", ascending=False)
-                    )
-                    resumen_emp.to_excel(writer, sheet_name="Por empresa", index=False)
-
-                    # Hoja 3: resumen por tipo de residuo
-                    resumen_res = (
-                        df_filtrado.groupby("tipo_residuo")
-                        .agg(
-                            registros=("peso_kg", "count"),
-                            peso_total_kg=("peso_kg", "sum"),
-                            peso_promedio_kg=("peso_kg", "mean"),
-                        )
-                        .round(2)
-                        .reset_index()
-                        .sort_values("peso_total_kg", ascending=False)
-                    )
-                    resumen_res.to_excel(writer, sheet_name="Por residuo", index=False)
-
-                    # Hoja 4: resumen por fecha
-                    resumen_fecha = (
-                        df_filtrado.groupby(df_filtrado["fecha"].dt.date)
-                        .agg(
-                            registros=("peso_kg", "count"),
-                            peso_total_kg=("peso_kg", "sum"),
-                        )
-                        .round(2)
-                        .reset_index()
-                        .rename(columns={"fecha": "Fecha"})
-                        .sort_values("Fecha", ascending=False)
-                    )
-                    resumen_fecha.to_excel(writer, sheet_name="Por fecha", index=False)
-
-                    # Hoja 5: resumen por empresa × residuo (tabla cruzada)
-                    pivot = (
-                        df_filtrado.pivot_table(
-                            index="empresa",
-                            columns="tipo_residuo",
-                            values="peso_kg",
-                            aggfunc="sum",
-                            fill_value=0,
-                        )
-                        .round(2)
-                        .reset_index()
-                    )
-                    pivot.to_excel(writer, sheet_name="Cruce empresa-residuo", index=False)
-
-                return output.getvalue()
-
-            nombre_archivo = (
-                f"Reporte_{emp_sel}_{res_sel}_{tipo_rango.replace(' ', '_')}.xlsx"
-                .replace("Todas", "todas_empresas")
-                .replace("Todos", "todos_residuos")
-            )
+            with st.spinner("Preparando Excel…"):
+                excel_bytes = construir_excel_descarga(df_f)
 
             st.download_button(
-                label="⬇️ Descargar Excel (5 hojas organizadas)",
-                data=construir_excel(df_f),
+                label="⬇️ Descargar Excel (hojas por gestor + resúmenes + gráficas)",
+                data=excel_bytes,
                 file_name=nombre_archivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
