@@ -1,33 +1,18 @@
 """
-onedrive.py  –  Integración Microsoft Graph API para TINTATEX
---------------------------------------------------------------
-Requiere en st.secrets:
-    AZURE_TENANT_ID     = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    AZURE_CLIENT_ID     = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    AZURE_CLIENT_SECRET = "tu-client-secret"
-    ONEDRIVE_FILE_ID    = "ID del archivo database.xlsx en OneDrive"
-                          (obtenlo con get_file_id() la primera vez)
-
-Instalación:
-    pip install msal requests openpyxl pandas
+onedrive.py – Integración Microsoft Graph API para TINTATEX (Versión Optimizada sin Fotos)
 """
 
 import io
-import time
 import requests
 import pandas as pd
 import streamlit as st
 
 # ─────────────────────────────────────────────────────────────
-# AUTENTICACIÓN  (token cacheado con st.cache_resource)
+# AUTENTICACIÓN
 # ─────────────────────────────────────────────────────────────
 
-@st.cache_resource(ttl=3300)   # token MS dura 3600 s → renovar 5 min antes
+@st.cache_resource(ttl=3300)
 def _get_access_token() -> str:
-    """
-    Obtiene un access token de Azure AD usando Client Credentials Flow.
-    Cachea el token ~55 minutos para no autenticar en cada rerun.
-    """
     import msal
     tenant_id     = st.secrets["AZURE_TENANT_ID"]
     client_id     = st.secrets["AZURE_CLIENT_ID"]
@@ -38,128 +23,65 @@ def _get_access_token() -> str:
         authority=f"https://login.microsoftonline.com/{tenant_id}",
         client_credential=client_secret,
     )
-    result = app.acquire_token_for_client(
-        scopes=["https://graph.microsoft.com/.default"]
-    )
+    result = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
     if "access_token" not in result:
-        raise RuntimeError(f"Error de autenticación Azure: {result.get('error_description')}")
+        raise RuntimeError(f"Error Azure: {result.get('error_description')}")
     return result["access_token"]
 
-
 def _headers() -> dict:
-    return {"Authorization": f"Bearer {_get_access_token()}",
-            "Content-Type": "application/json"}
-
-
-# ─────────────────────────────────────────────────────────────
-# UTILIDADES DE ARCHIVO
-# ─────────────────────────────────────────────────────────────
+    return {"Authorization": f"Bearer {_get_access_token()}", "Content-Type": "application/json"}
 
 GRAPH = "https://graph.microsoft.com/v1.0"
-
-
-def get_file_id(filename: str = "database.xlsx") -> str:
-    """
-    Busca el archivo en el OneDrive del usuario de servicio y devuelve su ID.
-    Úsalo una sola vez para obtener el ONEDRIVE_FILE_ID que guardas en secrets.
-    """
-    url = f"{GRAPH}/me/drive/root/search(q='{filename}')"
-    resp = requests.get(url, headers=_headers())
-    resp.raise_for_status()
-    items = resp.json().get("value", [])
-    if not items:
-        raise FileNotFoundError(f"No se encontró '{filename}' en OneDrive.")
-    return items[0]["id"]
-
 
 def _file_url() -> str:
     file_id = st.secrets["ONEDRIVE_FILE_ID"]
     return f"{GRAPH}/me/drive/items/{file_id}"
 
-
 # ─────────────────────────────────────────────────────────────
 # LECTURA
 # ─────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=120)   # refresca cada 2 minutos
+@st.cache_data(ttl=120)
 def cargar_datos_onedrive() -> pd.DataFrame:
-    """
-    Descarga el Excel desde OneDrive y devuelve la hoja MASTER como DataFrame.
-    Usa caché de 2 minutos para evitar llamadas repetidas.
-    """
     try:
         url = _file_url() + "/content"
         resp = requests.get(url, headers=_headers())
         resp.raise_for_status()
 
-        df = pd.read_excel(
-            io.BytesIO(resp.content),
-            sheet_name="MASTER",
-            engine="openpyxl"
-        )
-        df["fecha"]   = pd.to_datetime(df["fecha"], errors="coerce")
-        df["mes_num"] = df["fecha"].dt.to_period("M")
+        df = pd.read_excel(io.BytesIO(resp.content), sheet_name="MASTER", engine="openpyxl")
+        df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
         return df
-
     except Exception as e:
-        st.error("❌ Error al cargar datos desde OneDrive.")
-        st.exception(e)
+        st.error("❌ Error al cargar desde OneDrive.")
         return pd.DataFrame()
 
-
 # ─────────────────────────────────────────────────────────────
-# ESCRITURA OPTIMIZADA — solo append de filas nuevas
+# ESCRITURA (SIN FOTOS)
 # ─────────────────────────────────────────────────────────────
 
 def append_filas_onedrive(nuevas_filas: list[dict]) -> None:
-    """
-    Agrega filas nuevas al Excel en OneDrive SIN descargar el archivo completo.
-    Usa la API de Workbook Sessions de Graph para hacer append directo.
-
-    nuevas_filas: lista de dicts con las mismas claves que las columnas de MASTER.
-    """
     base_url = _file_url()
     hdrs = _headers()
 
-    # 1. Abrir sesión persistente (reduce latencia en operaciones múltiples)
-    sess_resp = requests.post(
-        base_url + "/workbook/createSession",
-        headers=hdrs,
-        json={"persistChanges": True}
-    )
+    # Abrir sesión
+    sess_resp = requests.post(base_url + "/workbook/createSession", headers=hdrs, json={"persistChanges": True})
     sess_resp.raise_for_status()
-    session_id = sess_resp.json()["id"]
-    hdrs["workbook-session-id"] = session_id
+    hdrs["workbook-session-id"] = sess_resp.json()["id"]
 
     try:
-        # 2. Leer la última fila usada en MASTER para saber dónde insertar
-        used_resp = requests.get(
-            base_url + "/workbook/worksheets/MASTER/usedRange",
-            headers=hdrs
-        )
+        # Leer última fila
+        used_resp = requests.get(base_url + "/workbook/worksheets/MASTER/usedRange", headers=hdrs)
         used_resp.raise_for_status()
-        used = used_resp.json()
+        n_filas = len(used_resp.json()["values"])
+        
+        # COLUMNAS LIMPIAS (Sin URLs de fotos)
+        COLUMNAS = ["fecha", "mes", "empresa", "conductor", "placa", "tipo_residuo", "peso_kg", "novedades"]
+        
+        valores = [[str(row.get(c, "")) for c in COLUMNAS] for row in nuevas_filas]
 
-        n_cols  = len(used["values"][0]) if used["values"] else 10
-        n_filas = len(used["values"])                  # incluye encabezado
-        primera_fila_libre = n_filas + 1               # Excel es 1-indexado
+        # Rango destino (A hasta H, que son 8 columnas)
+        rango = f"A{n_filas + 1}:H{n_filas + len(valores)}"
 
-        # 3. Convertir lista de dicts a lista de listas (mismo orden que MASTER)
-        COLUMNAS = [
-            "fecha", "mes", "empresa", "conductor", "placa",
-            "tipo_residuo", "peso_kg", "novedades", "url_memo", "url_camion"
-        ]
-        valores = [
-            [str(row.get(c, "")) for c in COLUMNAS]
-            for row in nuevas_filas
-        ]
-
-        # 4. Calcular rango destino  Ej: A5:J7
-        col_letra = _col_letter(n_cols)
-        rango = (f"A{primera_fila_libre}:"
-                 f"{col_letra}{primera_fila_libre + len(valores) - 1}")
-
-        # 5. PATCH sobre el rango — solo escribe las filas nuevas
         patch_resp = requests.patch(
             base_url + f"/workbook/worksheets/MASTER/range(address='{rango}')",
             headers=hdrs,
@@ -168,58 +90,10 @@ def append_filas_onedrive(nuevas_filas: list[dict]) -> None:
         patch_resp.raise_for_status()
 
     finally:
-        # 6. Cerrar sesión siempre, aunque falle
-        requests.post(
-            base_url + "/workbook/closeSession",
-            headers=hdrs
-        )
-
-
-def _col_letter(n: int) -> str:
-    """Convierte número de columna a letra (1→A, 26→Z, 27→AA)."""
-    result = ""
-    while n:
-        n, rem = divmod(n - 1, 26)
-        result = chr(65 + rem) + result
-    return result
-
-
-# ─────────────────────────────────────────────────────────────
-# SUBIDA DE FOTOS A ONEDRIVE
-# ─────────────────────────────────────────────────────────────
-
-def subir_foto_onedrive(nombre_archivo: str, contenido: bytes) -> str:
-    """
-    Sube una foto a la carpeta /fotos/ en OneDrive y devuelve la URL de descarga.
-    Para archivos < 4 MB (fotos de memo/camión generalmente cumplen esto).
-    """
-    url = f"{GRAPH}/me/drive/root:/fotos/{nombre_archivo}:/content"
-    hdrs = {
-        "Authorization": f"Bearer {_get_access_token()}",
-        "Content-Type": "application/octet-stream"
-    }
-    resp = requests.put(url, headers=hdrs, data=contenido)
-    resp.raise_for_status()
-
-    # Crear enlace compartido de solo lectura
-    item_id  = resp.json()["id"]
-    link_url = f"{GRAPH}/me/drive/items/{item_id}/createLink"
-    link_resp = requests.post(
-        link_url,
-        headers=_headers(),
-        json={"type": "view", "scope": "organization"}
-    )
-    link_resp.raise_for_status()
-    return link_resp.json()["link"]["webUrl"]
-
-
-# ─────────────────────────────────────────────────────────────
-# DESCARGA COMPLETA (para el botón "Exportar Excel")
-# ─────────────────────────────────────────────────────────────
+        requests.post(base_url + "/workbook/closeSession", headers=hdrs)
 
 def descargar_excel_onedrive() -> bytes:
-    """Descarga el archivo Excel completo como bytes (para st.download_button)."""
-    url  = _file_url() + "/content"
+    url = _file_url() + "/content"
     resp = requests.get(url, headers=_headers())
     resp.raise_for_status()
     return resp.content
