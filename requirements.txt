@@ -1,6 +1,7 @@
 streamlit
 pandas
+github
 openpyxl
-PyGithub
+msal
+requests
 plotly
-xlrd
