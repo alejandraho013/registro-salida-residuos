@@ -15,7 +15,7 @@ GESTORES_DATA = {
     "CORPOGESTAR":             sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
     "Recicla Oriente":          sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
     "Quimetales NO Peligrosos":sorted(["Algodón","Retal de tela","Tubo plega"]),
-    "Quimetales Peligrosos":   sorted(["RAEE","Residuos laboratorio","Tela sucia"]),
+    "Quimetales Peligrosos":   sorted(["RAEE","Residuos laboratorio","CDR"]),
     "Otro": [],
 }
 
