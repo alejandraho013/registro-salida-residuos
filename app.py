@@ -5,10 +5,9 @@ from datetime import datetime
 import re
 import io
 import plotly.express as px
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 # ─────────────────────────────────────────────────────────────
-# CONFIGURACIÓN
+# CONFIGURACIÓN Y FACTORES AMBIENTALES
 # ─────────────────────────────────────────────────────────────
 REPO_NAME = "alejandraho013/registro-salida-residuos"
 
@@ -20,13 +19,11 @@ GESTORES_DATA = {
     "Otro": [],
 }
 
-COLORES_EMPRESA = {
-    "CORPOGESTAR":              "#2196F3",
-    "Recicla Oriente":          "#4CAF50",
-    "Quimetales NO Peligrosos": "#FF9800",
-    "Quimetales Peligrosos":    "#F44336",
+# Factores de emisión (kg CO2 evitados por cada kg reciclado) - Valores promedio aproximados
+FACTORES_CO2 = {
+    "Cartón": 0.9, "Papel": 0.9, "Plástico": 1.5, "PET": 1.2, "Pasta": 1.0, 
+    "Retal de tela": 0.5, "Algodón": 0.4, "Tubo plega": 0.8
 }
-COLOR_DEFAULT = "#9C27B0"
 
 try:
     TOKEN     = st.secrets["TOKEN"]
@@ -42,24 +39,29 @@ if USE_ONEDRIVE:
 # ─────────────────────────────────────────────────────────────
 # ESTILOS Y SESSION STATE
 # ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="TINTATEX · Gestión de Residuos", layout="wide")
+st.set_page_config(page_title="TINTATEX · Gestión Ambiental", layout="wide")
 
 st.markdown("""
 <style>
-.main-header { background: linear-gradient(135deg,#1a237e 0%,#283593 100%); padding:1.5rem; border-radius:12px; color:white; margin-bottom:1.5rem; }
-.kpi-card { background:white; border-radius:10px; padding:1rem; border-left:4px solid #1a237e; box-shadow:0 2px 5px rgba(0,0,0,.1); text-align:center; }
-.kpi-value { font-size:1.8rem; font-weight:700; color:#1a237e; }
-.kpi-label { font-size:0.9rem; color:#666; }
+.main-header { background: linear-gradient(135deg,#004d40 0%,#00796b 100%); padding:1.5rem; border-radius:12px; color:white; margin-bottom:1.5rem; }
+.kpi-card { background:white; border-radius:10px; padding:1rem; border-left:4px solid #00796b; box-shadow:0 2px 5px rgba(0,0,0,.1); text-align:center; }
+.kpi-value { font-size:1.8rem; font-weight:700; color:#004d40; }
 </style>
-<div class="main-header"><h1>🏭 TINTATEX · Gestión de Residuos</h1><p>Registro y Analítica (Sin Fotos)</p></div>
+<div class="main-header"><h1>🏭 TINTATEX · Gestión Ambiental de Residuos</h1><p>Registro de Pesajes y Huella de Carbono</p></div>
 """, unsafe_allow_html=True)
 
 if "lista_temporal" not in st.session_state: st.session_state.lista_temporal = []
 if "envio_exitoso" not in st.session_state: st.session_state.envio_exitoso = False
 
 # ─────────────────────────────────────────────────────────────
-# FUNCIONES DE DATOS
+# FUNCIONES AUXILIARES
 # ─────────────────────────────────────────────────────────────
+def calcular_co2(residuo, peso):
+    for clave, factor in FACTORES_CO2.items():
+        if clave.lower() in residuo.lower():
+            return peso * factor
+    return 0.0
+
 @st.cache_data(ttl=600)
 def cargar_datos_github():
     try:
@@ -90,53 +92,73 @@ def guardar_datos(nuevas_filas, empresa, placa):
 # ─────────────────────────────────────────────────────────────
 # INTERFAZ
 # ─────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📝 Registro", "📊 Reportes y Gráficas"])
+tab1, tab2 = st.tabs(["📝 Registro", "📊 Reportes de Impacto"])
 
 with tab1:
     if st.session_state.envio_exitoso:
-        st.success("✅ ¡Registro guardado con éxito!")
-        if st.button("🔄 Iniciar Nuevo Registro", type="primary"):
+        st.success("✅ ¡Registro guardado y reporte de impacto actualizado!")
+        if st.button("🔄 Nuevo Registro", type="primary"):
             st.session_state.envio_exitoso = False
             st.session_state.lista_temporal = []
-            cargar_datos_github.clear()
             st.rerun()
     else:
-        with st.expander("🚛 1. Datos Generales", expanded=True):
+        with st.expander("🚛 1. Información del Transporte", expanded=True):
             c1, c2 = st.columns(2)
             fecha = c1.date_input("Fecha", datetime.now())
             emp_sel = c1.selectbox("Empresa Gestora", options=list(GESTORES_DATA.keys()))
             empresa_final = c1.text_input("Nombre Manual").upper() if emp_sel == "Otro" else emp_sel
-            conductor = c2.text_input("Conductor")
-            placa = c2.text_input("Placa (ABC123)").upper().strip()
+            
+            conductor = c2.text_input("Nombre Conductor")
+            cp1, cp2 = c2.columns([2, 1])
+            placa = cp1.text_input("Placa (ABC123)").upper().strip()
             placa_valida = bool(re.match(r"^[A-Z]{3}[0-9]{3}$", placa))
+            if placa:
+                if placa_valida: cp2.success("OK")
+                else: cp2.error("Error")
+            
+            # --- NUEVA FUNCIÓN: Capacidad del camión ---
+            capacidad = c2.number_input("Capacidad Camión (kg) - Opcional", min_value=0.0, step=100.0)
 
-        st.subheader("⚖️ 2. Pesajes")
+        st.subheader("⚖️ 2. Pesajes y Cálculo de Impacto")
         col_r, col_p, col_b = st.columns([3,2,1])
         res_opts = GESTORES_DATA.get(emp_sel, []) + ["Otro"]
-        tipo_res = col_r.selectbox("Residuo", options=res_opts)
-        res_final = col_r.text_input("¿Cuál?") if tipo_res == "Otro" else tipo_res
+        tipo_res = col_r.selectbox("Tipo de Residuo", options=res_opts)
+        res_final = col_r.text_input("Especifique") if tipo_res == "Otro" else tipo_res
         peso = col_p.number_input("Peso (kg)", min_value=0.0, step=0.1)
         
-        if col_b.button("➕ Añadir", use_container_width=True):
+        if col_b.button("➕ Añadir Pesaje", use_container_width=True):
             if placa_valida and peso > 0:
                 st.session_state.lista_temporal.append({"tipo_residuo": res_final, "peso_kg": peso})
-                st.toast("Añadido")
-            else: st.error("Revisa placa/peso")
+                st.toast(f"Añadido {peso} kg")
+            else: st.error("Verifique placa y peso")
 
         if st.session_state.lista_temporal:
             df_temp = pd.DataFrame(st.session_state.lista_temporal)
+            total_actual = df_temp['peso_kg'].sum()
+            
+            # Alerta de capacidad
+            if capacidad > 0 and total_actual > capacidad:
+                st.warning(f"⚠️ Carga actual ({total_actual:,.1f} kg) supera la capacidad informada ({capacidad:,.1f} kg).")
+            
+            # KPIs Temporales
+            t1, t2, t3 = st.columns(3)
+            t1.metric("Suma Carga", f"{total_actual:,.1f} kg")
+            t2.metric("N° Pesajes", len(df_temp))
+            # Cálculo de CO2 para la lista temporal
+            co2_temp = sum([calcular_co2(x["tipo_residuo"], x["peso_kg"]) for x in st.session_state.lista_temporal])
+            t3.metric("CO2 Evitado Est.", f"{co2_temp:,.1f} kg")
+            
             st.dataframe(df_temp, use_container_width=True, hide_index=True)
-            st.info(f"Total: {df_temp['peso_kg'].sum():,.1f} kg")
-            if st.button("🧹 Limpiar lista"):
-                st.session_state.lista_temporal = []
+            if st.button("⏪ Eliminar último"):
+                st.session_state.lista_temporal.pop()
                 st.rerun()
 
         novedades = st.text_area("Observaciones")
-        if st.button("📤 ENVIAR TODO", type="primary", use_container_width=True):
+        if st.button("📤 ENVIAR REGISTRO", type="primary", use_container_width=True):
             if not st.session_state.lista_temporal or not placa_valida:
                 st.error("Datos incompletos.")
             else:
-                with st.spinner("⏳ Procesando información..."):
+                with st.spinner("💾 Sincronizando con base de datos ambiental..."):
                     filas = [{
                         "fecha": str(fecha), "mes": fecha.strftime("%B_%Y"),
                         "empresa": empresa_final, "conductor": conductor, "placa": placa,
@@ -149,39 +171,30 @@ with tab1:
 
 with tab2:
     df = cargar_datos_onedrive() if USE_ONEDRIVE else cargar_datos_github()
-    if df.empty: st.info("Sin datos para mostrar.")
+    if df.empty: st.info("Esperando primer registro...")
     else:
-        with st.expander("🔍 Filtros"):
-            f_mes = st.selectbox("Mes", ["Todos"] + sorted(df["mes"].unique().tolist()))
+        # Cálculo de columna de CO2 en el histórico
+        df["co2_evitado"] = df.apply(lambda x: calcular_co2(x["tipo_residuo"], x["peso_kg"]), axis=1)
+        
+        f_mes = st.selectbox("Mes de reporte", ["Todos"] + sorted(df["mes"].unique().tolist()))
         df_f = df if f_mes == "Todos" else df[df["mes"] == f_mes]
 
-        # KPIs
+        # KPIs de Impacto Ambiental
         k1, k2, k3 = st.columns(3)
-        k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{df_f["peso_kg"].sum():,.1f} kg</div><div class="kpi-label">Peso Total</div></div>', unsafe_allow_html=True)
-        k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{len(df_f)}</div><div class="kpi-label">Registros</div></div>', unsafe_allow_html=True)
-        k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{df_f["empresa"].nunique()}</div><div class="kpi-label">Gestores</div></div>', unsafe_allow_html=True)
+        k1.markdown(f'<div class="kpi-card"><div class="kpi-value">{df_f["peso_kg"].sum():,.1f} kg</div>Peso Total</div>', unsafe_allow_html=True)
+        k2.markdown(f'<div class="kpi-card"><div class="kpi-value">{df_f["co2_evitado"].sum():,.1f} kg</div>CO2 Evitado Est.</div>', unsafe_allow_html=True)
+        k3.markdown(f'<div class="kpi-card"><div class="kpi-value">{df_f["empresa"].nunique()}</div>Gestores Activos</div>', unsafe_allow_html=True)
 
+        # Gráficas
         st.divider()
-        
-        # --- GRÁFICAS RESTAURADAS ---
         g1, g2 = st.columns(2)
         with g1:
-            st.subheader("⚖️ Peso por Empresa")
-            res_emp = df_f.groupby("empresa")["peso_kg"].sum().reset_index()
-            fig_emp = px.bar(res_emp, x="empresa", y="peso_kg", color="empresa", text_auto=".1f", color_discrete_map=COLORES_EMPRESA)
-            st.plotly_chart(fig_emp, use_container_width=True)
-        
+            res_co2 = df_f.groupby("empresa")["co2_evitado"].sum().reset_index()
+            fig = px.bar(res_co2, x="empresa", y="co2_evitado", title="🌱 CO2 Evitado por Gestor (kg)", text_auto=".1f")
+            st.plotly_chart(fig, use_container_width=True)
         with g2:
-            st.subheader("🗂️ Distribución por Residuo")
-            res_res = df_f.groupby("tipo_residuo")["peso_kg"].sum().reset_index()
-            fig_pie = px.pie(res_res, values="peso_kg", names="tipo_residuo", hole=0.4)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_p = px.pie(df_f, values="peso_kg", names="tipo_residuo", title="♻️ Distribución de Carga", hole=0.4)
+            st.plotly_chart(fig_p, use_container_width=True)
 
-        st.subheader("📋 Datos Detallados")
+        st.subheader("📋 Registro Histórico")
         st.dataframe(df_f, use_container_width=True, hide_index=True)
-
-        # Exportación
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_f.to_excel(writer, index=False, sheet_name="MASTER")
-        st.download_button("⬇️ Descargar Excel", output.getvalue(), f"Reporte_TINTATEX_{f_mes}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
