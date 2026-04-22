@@ -547,7 +547,7 @@ with tab2:
         with st.expander("🔍 Filtros", expanded=True):
             tipo_rango = st.radio(
                 "Período",
-                ["Rango de fechas", "Día exacto", "Mes", "Todo"],
+                ["Rango de fechas"],
                 horizontal=True,
             )
 
