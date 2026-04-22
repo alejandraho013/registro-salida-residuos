@@ -1,6 +1,6 @@
 streamlit
 pandas
-github
+PyGithub
 openpyxl
 msal
 requests
