@@ -8,7 +8,7 @@ import plotly.express as px
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import BarChart, PieChart, Reference
-from openpyxl.chart.series import DataPoint
+from openpyxl.chart.label import DataLabelList
 from openpyxl.utils import get_column_letter
 
 # ─────────────────────────────────────────────────────────────
@@ -180,18 +180,20 @@ def _estilo_header(ws, fila: int, n_cols: int, color_hex: str = COLOR_HEADER_XL)
 
 
 def _autowidth(ws):
-    for col_cells in ws.columns:
-        max_len = 0
-        col_letter = get_column_letter(col_cells[0].column)
-        for cell in col_cells:
-            try:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            except Exception:
-                pass
-        ws.column_dimensions[col_letter].width = min(max_len + 4, 40)
+    anchos = {}
+    for row in ws.iter_rows(values_only=False):
+        for cell in row:
+            col_idx = getattr(cell, "column", None)
+            if not isinstance(col_idx, int) or cell.value is None:
+                continue
+            largo = len(str(cell.value))
+            if largo > anchos.get(col_idx, 0):
+                anchos[col_idx] = largo
+    for col_idx, largo in anchos.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(largo + 4, 40)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)  # quitar hoja vacía por defecto
@@ -287,7 +289,7 @@ def construir_excel_descarga(df_filtrado: pd.DataFrame) -> bytes:
     pie_cats = Reference(ws_m, min_col=col_pie,     min_row=fila_graf + 1, max_row=fila_graf + n_res)
     pie_chart.add_data(pie_data, titles_from_data=True)
     pie_chart.set_categories(pie_cats)
-    pie_chart.dataLabels              = pie_chart.dataLabels or type('obj', (object,), {'showPercent': True, 'showCatName': True})()
+    pie_chart.dataLabels = DataLabelList(showPercent=True, showCatName=True)
     ws_m.add_chart(pie_chart, f"D{fila_graf + 22}")
 
     # ── 2. Hoja por cada gestor ──────────────────────────────
