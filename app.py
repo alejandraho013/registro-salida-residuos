@@ -560,13 +560,6 @@ with tab2:
                 fecha_ini = f1.date_input("Desde", value=fecha_min, min_value=fecha_min, max_value=fecha_max)
                 fecha_fin = f2.date_input("Hasta", value=fecha_max, min_value=fecha_min, max_value=fecha_max)
                 mask_fecha = (df["fecha"].dt.date >= fecha_ini) & (df["fecha"].dt.date <= fecha_fin)
-            elif tipo_rango == "Día exacto":
-                dia = f1.date_input("Día", value=fecha_max, min_value=fecha_min, max_value=fecha_max)
-                mask_fecha = df["fecha"].dt.date == dia
-            elif tipo_rango == "Mes":
-                meses = sorted(df["mes"].dropna().unique().tolist())
-                mes_sel = f1.selectbox("Mes", meses)
-                mask_fecha = df["mes"] == mes_sel
             else:
                 mask_fecha = pd.Series([True] * len(df), index=df.index)
 
@@ -652,7 +645,7 @@ with tab2:
                 excel_bytes = construir_excel_descarga(df_f)
 
             st.download_button(
-                label="⬇️ Descargar Excel (hojas por gestor + resúmenes + gráficas)",
+                label="⬇️ Descargar Excel",
                 data=excel_bytes,
                 file_name=nombre_archivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
