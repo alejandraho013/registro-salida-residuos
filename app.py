@@ -16,6 +16,10 @@ from openpyxl.utils import get_column_letter
 # ─────────────────────────────────────────────────────────────
 REPO_NAME = "alejandraho013/registro-salida-residuos"
 
+USE_ONEDRIVE = all(k in st.secrets for k in ("AZURE_TENANT_ID","AZURE_CLIENT_ID","AZURE_CLIENT_SECRET","ONEDRIVE_FILE_ID"))
+if USE_ONEDRIVE:
+    from onedrive import cargar_datos_onedrive, append_filas_onedrive, descargar_excel_onedrive
+    
 GESTORES_DATA = {
     "CORPOGESTAR":              sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
     "Recicla Oriente":          sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
