@@ -652,3 +652,11 @@ with tab2:
                 use_container_width=True,
                 type="primary",
             )
+            
+if st.button("OBTENER ID DEL EXCEL"):
+    from onedrive import get_file_id
+    try:
+        fid = get_file_id("database.xlsx")
+        st.write(f"ID del archivo: {fid}")
+    except Exception as e:
+        st.error(f"Error: {e}")
