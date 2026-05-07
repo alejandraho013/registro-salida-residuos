@@ -17,26 +17,26 @@ from openpyxl.utils import get_column_letter
 REPO_NAME = "alejandraho013/registro-salida-residuos"
     
 GESTORES_DATA = {
-    "CORPOGESTAR":              sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
-    "Recicla Oriente":          sorted(["Cartón limpio","Cartón sucio","Papel de archivo","Pasta","PET limpio","PET sucio","Plástico","Retal de tela","Tubo plega"]),
-    "Quimetales NO Peligrosos": sorted(["Algodón","Retal de tela","Tubo plega"]),
-    "Quimetales Peligrosos":    sorted(["RAEE","Residuos laboratorio","CDR","Solidos Contaminados"]),
+    "CORPOGESTAR":              sorted(["Cartón limpio","Cartón contaminado","Papel de archivo","Pasta","PET limpio","PET contaminado","Plástico","Retal de tela","Tubo plega"]),
+    "Recicla Oriente":          sorted(["Cartón limpio","Cartón contaminado","Papel de archivo","Pasta","PET limpio","PET contaminado","Plástico","Retal de tela","Tubo plega"]),
+    "VEOLIA Aprovechables": sorted(["Algodón","Retal de tela","Tubo plega"]),
+    "VEOLIA Peligrosos":    sorted(["RAEE","Residuos laboratorio","CDR","Solidos Contaminados"]),
     "Otro": [],
 }
 
 COLORES_EMPRESA = {
     "CORPOGESTAR":              "#2196F3",
     "Recicla Oriente":          "#4CAF50",
-    "Quimetales NO Peligrosos": "#FF9800",
-    "Quimetales Peligrosos":    "#F44336",
+    "VEOLIA Aprovechables": "#FF9800",
+    "VEOLIA Peligrosos":    "#F44336",
 }
 
 # Colores openpyxl para cada gestor (ARGB sin #)
 COLORES_GESTOR_XL = {
     "CORPOGESTAR":              "FF2196F3",
     "Recicla Oriente":          "FF4CAF50",
-    "Quimetales NO Peligrosos": "FFFF9800",
-    "Quimetales Peligrosos":    "FFF44336",
+    "VEOLIA Aprovechables": "FFFF9800",
+    "VEOLIA Peligrosos":    "FFF44336",
 }
 COLOR_HEADER_XL   = "FF1A237E"   # azul oscuro encabezados
 COLOR_SUBHEAD_XL  = "FFE8EAF6"   # lila muy claro filas alternas / sub-encabezados
