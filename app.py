@@ -19,7 +19,7 @@ REPO_NAME = "alejandraho013/registro-salida-residuos"
 GESTORES_DATA = {
     "CORPOGESTAR":              sorted(["Cartón limpio","Cartón contaminado","Papel de archivo","Pasta","PET limpio","PET contaminado","Plástico","Retal de tela","Tubo plega"]),
     "Recicla Oriente":          sorted(["Cartón limpio","Cartón contaminado","Papel de archivo","Pasta","PET limpio","PET contaminado","Plástico","Retal de tela","Tubo plega"]),
-    "VEOLIA Aprovechables": sorted(["Algodón","Retal de tela","Tubo plega"]),
+    "VEOLIA Aprovechables": sorted(["Algodón","Retal de tela","Tubo plega","CDR"]),
     "VEOLIA Peligrosos":    sorted(["RAEE","Residuos laboratorio","CDR","Solidos Contaminados"]),
     "Otro": [],
 }
